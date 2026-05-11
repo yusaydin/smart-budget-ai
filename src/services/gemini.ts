@@ -50,6 +50,48 @@ export async function extractExpenseFromImage(base64Image: string): Promise<Extr
   return JSON.parse(response.text);
 }
 
+export async function extractExpenseFromText(emailText: string, categories: string[]): Promise<ExtractedExpense[]> {
+  const model = "gemini-3-flash-preview";
+  
+  const prompt = `Analyze this email or text receipt. Extract the total amount, currency, category, merchant name, date, and a brief description.
+  Determine if this could potentially be a corporate/business expense.
+  Important: Choose the best matching category exclusively from this list: ${categories.join(', ')}. If none match well, use 'Other' or the default.
+  If the email contains multiple distinct purchases, you can return a list. If it's a single receipt, return one in an array. If it doesn't look like a valid receipt with an amount, return an empty array.
+  
+  Email Content:
+  ${emailText}`;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            amount: { type: Type.NUMBER },
+            currency: { type: Type.STRING },
+            category: { type: Type.STRING },
+            merchant: { type: Type.STRING },
+            date: { type: Type.STRING, description: "ISO 8601 format (yyyy-MM-dd)" },
+            description: { type: Type.STRING },
+            isCorporatePotential: { type: Type.BOOLEAN }
+          },
+          required: ["amount", "currency", "category", "merchant"]
+        }
+      }
+    }
+  });
+
+  try {
+    return JSON.parse(response.text);
+  } catch (e) {
+    return [];
+  }
+}
+
 export async function generateMonthlyReport(expenses: any[], income: number, isCorporate: boolean) {
   const model = "gemini-3.1-pro-preview";
   

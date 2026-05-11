@@ -37,7 +37,11 @@ service cloud.firestore {
           && (data.isCorporate == null || data.isCorporate is bool)
           && (data.monthlyIncome == null || data.monthlyIncome is number)
           && (data.currency == null || data.currency is string)
-          && (data.categories == null || (data.categories is list && data.categories.size() <= 50));
+          && (data.categories == null || (data.categories is list && data.categories.size() <= 50))
+          && (data.syncFolders == null || data.syncFolders is string)
+          && (data.syncFrequencyDays == null || data.syncFrequencyDays is number)
+          && (data.syncLabels == null || data.syncLabels is string)
+          && (data.syncFrequency == null || data.syncFrequency is string);
       }
     }
 
@@ -58,7 +62,11 @@ service cloud.firestore {
           && (data.currency == null || data.currency is string)
           && (data.createdAt == null || data.createdAt is timestamp)
           && (data.merchant == null || (data.merchant is string && data.merchant.size() <= 128))
-          && (data.isCorporate == null || data.isCorporate is bool);
+          && (data.isCorporate == null || data.isCorporate is bool)
+          && (data.isRecurring == null || data.isRecurring is bool)
+          && (data.recurrenceInterval == null || data.recurrenceInterval is string)
+          && (data.nextRecurrenceDate == null || data.nextRecurrenceDate is string)
+          && (data.parentId == null || data.parentId is string);
       }
     }
 
