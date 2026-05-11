@@ -1,0 +1,6 @@
+{
+  "name": "BudgetAI",
+  "description": "AI-powered personal and corporate budget assistant with automated categorization and smart financial insights.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["AI Expense Analysis", "Corporate Tax Optimization", "Automated Categorization"]
+}

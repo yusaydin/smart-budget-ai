@@ -1,0 +1,66 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and settings",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "isCorporate": { "type": "boolean" },
+        "monthlyIncome": { "type": "number" },
+        "currency": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Expense": {
+      "title": "Expense",
+      "description": "A single financial transaction",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "currency": { "type": "string" },
+        "category": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "description": { "type": "string" },
+        "merchant": { "type": "string" },
+        "receiptImageUrl": { "type": "string" },
+        "isCorporate": { "type": "boolean" },
+        "taxDeductiblePotential": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "amount", "category", "date"]
+    },
+    "MonthlyReport": {
+      "title": "Monthly Report",
+      "description": "AI-generated financial insights for a specific month",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "yearMonth": { "type": "string", "description": "e.g., 2024-05" },
+        "totalSpent": { "type": "number" },
+        "categoryBreakdown": { "type": "object" },
+        "aiInsights": { "type": "string" },
+        "savingsOpportunities": { "type": "array", "items": { "type": "string" } }
+      },
+      "required": ["userId", "yearMonth"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile data"
+    },
+    "/expenses/{expenseId}": {
+      "schema": "Expense",
+      "description": "Individual expense records"
+    },
+    "/reports/{reportId}": {
+      "schema": "MonthlyReport",
+      "description": "Historical AI reports"
+    }
+  }
+}
