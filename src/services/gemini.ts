@@ -50,20 +50,27 @@ export async function extractExpenseFromImage(base64Image: string): Promise<Extr
   return JSON.parse(response.text);
 }
 
-export async function extractExpenseFromText(emailText: string, categories: string[]): Promise<ExtractedExpense[]> {
-  const model = "gemini-3-flash-preview";
+export async function extractExpenseFromEmail(emailText: string, pdfAttachments: string[], categories: string[]): Promise<ExtractedExpense[]> {
+  const model = "gemini-3.1-pro-preview"; // Use pro-preview for better multimodal parsing
   
-  const prompt = `Analyze this email or text receipt. Extract the total amount, currency, category, merchant name, date, and a brief description.
+  const promptText = `Analyze this email or text receipt, and any attached PDFs. Extract the total amount, currency, category, merchant name, date, and a brief description.
   Determine if this could potentially be a corporate/business expense.
   Important: Choose the best matching category exclusively from this list: ${categories.join(', ')}. If none match well, use 'Other' or the default.
-  If the email contains multiple distinct purchases, you can return a list. If it's a single receipt, return one in an array. If it doesn't look like a valid receipt with an amount, return an empty array.
+  If the email contains multiple distinct purchases or multiple PDF invoices, you can return a list. If it's a single receipt, return one in an array. If it doesn't look like a valid receipt with an amount, return an empty array.
   
   Email Content:
   ${emailText}`;
 
+  const parts: any[] = [{ text: promptText }];
+  for (const pdfBase64 of pdfAttachments) {
+    if (pdfBase64 && pdfBase64.length > 10) {
+      parts.push({ inlineData: { mimeType: "application/pdf", data: pdfBase64 } });
+    }
+  }
+
   const response = await ai.models.generateContent({
     model,
-    contents: prompt,
+    contents: [{ parts }],
     config: {
       responseMimeType: "application/json",
       responseSchema: {

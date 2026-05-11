@@ -40,7 +40,7 @@ import {
   deleteDoc
 } from 'firebase/firestore';
 import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType } from './lib/firebase';
-import { extractExpenseFromImage, generateMonthlyReport, getCorporateAdvice, extractExpenseFromText } from './services/gemini';
+import { extractExpenseFromImage, generateMonthlyReport, getCorporateAdvice, extractExpenseFromEmail } from './services/gemini';
 import { fetchRecentReceiptEmails } from './services/gmail';
 import { format } from 'date-fns';
 import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title } from 'chart.js';
@@ -375,22 +375,24 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
 
   const handleSyncEmails = async () => {
     setSyncingEmails(true);
-    setSyncMessage('Connecting to Gmail...');
+    setSyncMessage('Gmail\'e bağlanılıyor...');
     try {
       const emails = await fetchRecentReceiptEmails({
           frequency: profile?.syncFrequency || 'weekly',
           folder: profile?.syncLabels || profile?.syncFolders || ''
+      }, () => {
+          setSyncMessage('Gmail ile bağlandı. Faturalar aranıyor...');
       });
       if (emails.length === 0) {
-        setSyncMessage('No new receipts found.');
+        setSyncMessage('Yeni fatura bulunamadı.');
         setTimeout(() => setSyncMessage(''), 3000);
         return;
       }
-      setSyncMessage(`Parsing ${emails.length} emails...`);
+      setSyncMessage(`${emails.length} e-posta işleniyor...`);
       const cats = profile?.categories || DEFAULT_CATEGORIES;
       let added = 0;
       for (const email of emails) {
-        const extractedResults = await extractExpenseFromText(email.text, cats);
+        const extractedResults = await extractExpenseFromEmail(email.text, email.pdfAttachments || [], cats);
         for (const extracted of extractedResults) {
           if (extracted && extracted.amount > 0) {
             await addDoc(collection(db, 'expenses'), {
@@ -399,7 +401,7 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
               merchant: extracted.merchant || 'Unknown',
               category: extracted.category || 'Other',
               date: extracted.date || format(new Date(), 'yyyy-MM-dd'),
-              description: extracted.description || 'Email Receipt',
+              description: extracted.description || 'E-posta Faturası',
               isCorporate: !!extracted.isCorporatePotential,
               currency: extracted.currency || profile?.currency || 'TRY',
               createdAt: serverTimestamp()
@@ -408,11 +410,15 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
           }
         }
       }
-      setSyncMessage(`Synced ${added} new expenses!`);
+      setSyncMessage(`${added} yeni işlem senkronize edildi!`);
       setTimeout(() => setSyncMessage(''), 3000);
     } catch (e: any) {
       console.error(e);
-      setSyncMessage(e.message || 'Failed to sync. Check permissions.');
+      let errMsg = e.message || 'Senkronizasyon başarısız. İzinleri kontrol edin.';
+      if (errMsg.includes('Gmail API has not been used')) {
+        errMsg = 'Gmail API kapalı. Google Cloud Console\'dan Gmail API\'yi etkinleştirin.';
+      }
+      setSyncMessage(errMsg);
       setTimeout(() => setSyncMessage(''), 8000);
     } finally {
       setSyncingEmails(false);
@@ -947,6 +953,7 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
                    <option value="daily">Daily</option>
                    <option value="weekly">Weekly</option>
                    <option value="monthly">Monthly</option>
+                   <option value="3months">Last 3 Months (Full Scan)</option>
                    <option value="manual">Manual Only</option>
                  </select>
                  <p className="text-[10px] text-slate-500 mt-1">How often you want to scan for receipts.</p>

@@ -1,31 +1,50 @@
 import { auth } from '../lib/firebase';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
-export async function fetchRecentReceiptEmails(options?: { frequency?: string, folder?: string }) {
+export async function fetchRecentReceiptEmails(options?: { frequency?: string, folder?: string }, onConnected?: () => void) {
   const provider = new GoogleAuthProvider();
   provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
   
-  provider.setCustomParameters({
-    prompt: 'consent'
-  });
+  let token = localStorage.getItem('gmailAccessToken');
+  const tokenExpiry = localStorage.getItem('gmailTokenExpiry');
+
+  if (!token || !tokenExpiry || new Date().getTime() > parseInt(tokenExpiry)) {
+    try {
+      const result = await signInWithPopup(auth, provider);
+      const credential = GoogleAuthProvider.credentialFromResult(result);
+      token = credential?.accessToken || null;
+      
+      if (!token) {
+        throw new Error("Could not get access token");
+      }
+      
+      // Store token for ~55 minutes 
+      localStorage.setItem('gmailAccessToken', token);
+      localStorage.setItem('gmailTokenExpiry', (new Date().getTime() + 55 * 60 * 1000).toString());
+
+      if (onConnected) {
+        onConnected();
+      }
+    } catch (e) {
+      throw e;
+    }
+  } else {
+    // Already connected
+    if (onConnected) {
+      onConnected();
+    }
+  }
 
   try {
-    const result = await signInWithPopup(auth, provider);
-    const credential = GoogleAuthProvider.credentialFromResult(result);
-    const token = credential?.accessToken;
-    
-    if (!token) {
-      throw new Error("Could not get access token");
-    }
-
     const today = new Date();
     let days = 14;
     if (options?.frequency === 'daily') days = 1;
     else if (options?.frequency === 'weekly') days = 7;
     else if (options?.frequency === 'monthly') days = 30;
+    else if (options?.frequency === '3months') days = 90;
 
     const daysAgo = new Date(today.setDate(today.getDate() - days));
-    let queryStr = `(receipt OR invoice OR "your order" OR payment) after:${Math.floor(daysAgo.getTime() / 1000)}`;
+    let queryStr = `(receipt OR invoice OR "your order" OR payment OR "fatura") after:${Math.floor(daysAgo.getTime() / 1000)}`;
 
     if (options?.folder) {
       const labels = options.folder.split(',').map(l => l.trim()).filter(l => l);
@@ -36,13 +55,19 @@ export async function fetchRecentReceiptEmails(options?: { frequency?: string, f
 
     const query = encodeURIComponent(queryStr); 
     
-    const searchRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=10`, {
+    // Fetching more to represent 3 months potentially
+    const searchRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=200`, {
       headers: {
         Authorization: `Bearer ${token}`
       }
     });
 
     if (!searchRes.ok) {
+        if(searchRes.status === 401) {
+            localStorage.removeItem('gmailAccessToken');
+            localStorage.removeItem('gmailTokenExpiry');
+            throw new Error('Gmail session expired. Please try again.');
+        }
         const errText = await searchRes.text();
         let errMsg = "Failed to fetch messages";
         try {
@@ -67,7 +92,9 @@ export async function fetchRecentReceiptEmails(options?: { frequency?: string, f
         }
       });
       const msgData = await msgRes.json();
-      emails.push({ id: msg.id, text: extractEmailText(msgData) });
+      
+      const { text, pdfAttachments } = await extractEmailData(msgData, token!);
+      emails.push({ id: msg.id, text, pdfAttachments });
     }
     
     return emails;
@@ -77,8 +104,9 @@ export async function fetchRecentReceiptEmails(options?: { frequency?: string, f
   }
 }
 
-function extractEmailText(message: any): string {
+async function extractEmailData(message: any, token: string): Promise<{text: string, pdfAttachments: string[]}> {
   let text = '';
+  let pdfAttachments: string[] = [];
   
   const headers = message.payload?.headers || [];
   const subject = headers.find((h: any) => h.name === 'Subject')?.value || '';
@@ -95,24 +123,37 @@ function extractEmailText(message: any): string {
     }
   };
 
-  const getBody = (parts: any[]): string => {
-    let bodyText = '';
+  const traverseParts = async (parts: any[]) => {
     for (const part of parts) {
       if (part.mimeType === 'text/plain') {
-        bodyText += decodeBase64Url(part.body?.data || '');
+        text += decodeBase64Url(part.body?.data || '');
+      } else if (part.mimeType === 'application/pdf' && part.body?.attachmentId) {
+        // Fetch attachment
+        try {
+            const attRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}/attachments/${part.body.attachmentId}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            const attData = await attRes.json();
+            if (attData.data) {
+                // Return URL-safe base64 converted to standard base64
+                pdfAttachments.push(attData.data.replace(/-/g, '+').replace(/_/g, '/'));
+            }
+        } catch(e) {
+            console.error("Failed to load attachment", e);
+        }
       } else if (part.parts) {
-        bodyText += getBody(part.parts);
+        await traverseParts(part.parts);
       }
     }
-    return bodyText;
   };
 
   if (message.payload?.parts) {
-    text += getBody(message.payload.parts);
+    await traverseParts(message.payload.parts);
   } else if (message.payload?.body?.data) {
     text += decodeBase64Url(message.payload.body.data);
   }
 
   // Trim to 4000 characters to fit well in context window for quick processing
-  return text.substring(0, 4000); 
+  text = text.substring(0, 4000); 
+  return { text, pdfAttachments };
 }
