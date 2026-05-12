@@ -57,6 +57,7 @@ export async function extractExpenseFromEmail(emailText: string, pdfAttachments:
   Determine if this could potentially be a corporate/business expense.
   Important: Choose the best matching category exclusively from this list: ${categories.join(', ')}. If none match well, use 'Other' or the default.
   If the email contains multiple distinct purchases or multiple PDF invoices, you can return a list. If it's a single receipt, return one in an array. If it doesn't look like a valid receipt with an amount, return an empty array.
+  Pay close attention to the currency symbol or text (e.g. TL, TRY, $, USD, €, EUR). Always return the standard 3-letter currency code (e.g. TRY, USD, EUR).
   
   Email Content:
   ${emailText}`;

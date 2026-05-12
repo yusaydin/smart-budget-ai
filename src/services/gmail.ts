@@ -1,7 +1,14 @@
 import { auth } from '../lib/firebase';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
-export async function fetchRecentReceiptEmails(options?: { frequency?: string, folder?: string }, onConnected?: () => void) {
+export interface FetchedEmail {
+  id: string;
+  subject: string;
+  text: string;
+  pdfAttachments: string[];
+}
+
+export async function fetchRecentReceiptEmails(options?: { frequency?: string, folder?: string }, onConnected?: () => void): Promise<FetchedEmail[]> {
   const provider = new GoogleAuthProvider();
   provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
   
@@ -44,7 +51,7 @@ export async function fetchRecentReceiptEmails(options?: { frequency?: string, f
     else if (options?.frequency === '3months') days = 90;
 
     const daysAgo = new Date(today.setDate(today.getDate() - days));
-    let queryStr = `(receipt OR invoice OR "your order" OR payment OR "fatura") after:${Math.floor(daysAgo.getTime() / 1000)}`;
+    let queryStr = `(category:purchases OR receipt OR invoice OR "your order" OR payment OR "fatura") after:${Math.floor(daysAgo.getTime() / 1000)}`;
 
     if (options?.folder) {
       const labels = options.folder.split(',').map(l => l.trim()).filter(l => l);
@@ -56,7 +63,7 @@ export async function fetchRecentReceiptEmails(options?: { frequency?: string, f
     const query = encodeURIComponent(queryStr); 
     
     // Fetching more to represent 3 months potentially
-    const searchRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=200`, {
+    const searchRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=500`, {
       headers: {
         Authorization: `Bearer ${token}`
       }
@@ -93,8 +100,8 @@ export async function fetchRecentReceiptEmails(options?: { frequency?: string, f
       });
       const msgData = await msgRes.json();
       
-      const { text, pdfAttachments } = await extractEmailData(msgData, token!);
-      emails.push({ id: msg.id, text, pdfAttachments });
+      const { subject, text, pdfAttachments } = await extractEmailData(msgData, token!);
+      emails.push({ id: msg.id, subject, text, pdfAttachments });
     }
     
     return emails;
@@ -104,7 +111,7 @@ export async function fetchRecentReceiptEmails(options?: { frequency?: string, f
   }
 }
 
-async function extractEmailData(message: any, token: string): Promise<{text: string, pdfAttachments: string[]}> {
+async function extractEmailData(message: any, token: string): Promise<{subject: string, text: string, pdfAttachments: string[]}> {
   let text = '';
   let pdfAttachments: string[] = [];
   
@@ -155,5 +162,5 @@ async function extractEmailData(message: any, token: string): Promise<{text: str
 
   // Trim to 4000 characters to fit well in context window for quick processing
   text = text.substring(0, 4000); 
-  return { text, pdfAttachments };
+  return { subject, text, pdfAttachments };
 }

@@ -178,7 +178,7 @@ export default function App() {
               currency: 'TRY',
               categories: DEFAULT_CATEGORIES,
               syncLabels: '',
-              syncFrequency: 'weekly'
+              syncFrequency: 'monthly'
             };
             await setDoc(docRef, newProfile);
             setProfile(newProfile);
@@ -378,7 +378,7 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
     setSyncMessage('Gmail\'e bağlanılıyor...');
     try {
       const emails = await fetchRecentReceiptEmails({
-          frequency: profile?.syncFrequency || 'weekly',
+          frequency: profile?.syncFrequency || 'monthly',
           folder: profile?.syncLabels || profile?.syncFolders || ''
       }, () => {
           setSyncMessage('Gmail ile bağlandı. Faturalar aranıyor...');
@@ -391,26 +391,56 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
       setSyncMessage(`${emails.length} e-posta işleniyor...`);
       const cats = profile?.categories || DEFAULT_CATEGORIES;
       let added = 0;
+      let skipped = 0;
+      
+      const isLikelyReceipt = (subject: string, text: string) => {
+        const lowerSubject = subject.toLowerCase();
+        const lowerText = text.toLowerCase();
+        
+        const keywords = ['receipt', 'invoice', 'fatura', 'order', 'sipariş', 'payment', 'ödeme', 'makbuz', 'purchase', 'ticket', 'bilet'];
+        // Quick short-circuit if subject matches
+        if (keywords.some(k => lowerSubject.includes(k))) return true;
+        // Or if the first chunk of text mentions it
+        if (keywords.some(k => lowerText.substring(0, 800).includes(k))) return true;
+        
+        return false;
+      };
+
       for (const email of emails) {
-        const extractedResults = await extractExpenseFromEmail(email.text, email.pdfAttachments || [], cats);
-        for (const extracted of extractedResults) {
-          if (extracted && extracted.amount > 0) {
-            await addDoc(collection(db, 'expenses'), {
-              userId: profile?.uid,
-              amount: typeof extracted.amount === 'string' ? parseFloat(extracted.amount) : extracted.amount,
-              merchant: extracted.merchant || 'Unknown',
-              category: extracted.category || 'Other',
-              date: extracted.date || format(new Date(), 'yyyy-MM-dd'),
-              description: extracted.description || 'E-posta Faturası',
-              isCorporate: !!extracted.isCorporatePotential,
-              currency: extracted.currency || profile?.currency || 'TRY',
-              createdAt: serverTimestamp()
-            });
-            added++;
+        if (!isLikelyReceipt(email.subject || '', email.text || '') && (email.pdfAttachments?.length || 0) === 0) {
+           skipped++;
+           continue; // Skip emails that clearly don't look like a receipt
+        }
+        
+        try {
+          const extractedResults = await extractExpenseFromEmail(`Subject: ${email.subject || 'No Subject'}\n\n${email.text}`, email.pdfAttachments || [], cats);
+          for (const extracted of extractedResults) {
+            if (extracted && extracted.amount > 0) {
+              await addDoc(collection(db, 'expenses'), {
+                userId: profile?.uid,
+                amount: typeof extracted.amount === 'string' ? parseFloat(extracted.amount) : extracted.amount,
+                merchant: extracted.merchant || 'Unknown',
+                category: extracted.category || 'Other',
+                date: extracted.date || format(new Date(), 'yyyy-MM-dd'),
+                description: extracted.description || 'E-posta Faturası',
+                isCorporate: !!extracted.isCorporatePotential,
+                currency: extracted.currency || profile?.currency || 'TRY',
+                createdAt: serverTimestamp()
+              });
+              added++;
+            }
+          }
+          // Daha fazla bekleyerek kota limitini aşmamaya çalış.
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        } catch (aiErr: any) {
+          console.error("Email parsing error:", aiErr);
+          const errMsg = aiErr?.message || "";
+          if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+            throw new Error("Yapay zeka API kota limitine ulaşıldı. Lütfen daha sonra tekrar senkronize edin.");
           }
         }
       }
-      setSyncMessage(`${added} yeni işlem senkronize edildi!`);
+      setSyncMessage(`${added} yeni işlem eklendi! ${skipped ? `(${skipped} ilgisiz e-posta atlandı)` : ''}`);
       setTimeout(() => setSyncMessage(''), 3000);
     } catch (e: any) {
       console.error(e);
@@ -943,7 +973,7 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
                <div>
                  <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-2 font-bold">Sync Frequency</label>
                  <select 
-                   value={profile?.syncFrequency || 'weekly'}
+                   value={profile?.syncFrequency || 'monthly'}
                    onChange={async (e) => {
                      const val = e.target.value;
                      if (profile) await setDoc(doc(db, 'users', profile.uid), { ...profile, syncFrequency: val });
