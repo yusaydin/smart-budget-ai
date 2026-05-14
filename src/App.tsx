@@ -7,12 +7,8 @@ import {
   Settings, 
   LogOut, 
   Camera, 
-  ArrowUpRight, 
-  ArrowDownRight,
   TrendingDown,
   Sparkles,
-  Info,
-  ChevronRight,
   X,
   Upload,
   User as UserIcon,
@@ -36,18 +32,25 @@ import {
   doc,
   getDoc,
   setDoc,
-  updateDoc,
-  deleteDoc
+  updateDoc
 } from 'firebase/firestore';
 import { auth, db, signInWithGoogle, logout, handleFirestoreError, OperationType } from './lib/firebase';
 import { extractExpenseFromImage, generateMonthlyReport, getCorporateAdvice, extractExpenseFromEmail } from './services/gemini';
 import { fetchRecentReceiptEmails } from './services/gmail';
 import { format } from 'date-fns';
-import { Chart as ChartJS, ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title } from 'chart.js';
-import { Pie, Bar } from 'react-chartjs-2';
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
+import { Pie } from 'react-chartjs-2';
 import Markdown from 'react-markdown';
 
-ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement, Title);
+ChartJS.register(ArcElement, Tooltip, Legend);
+
+function formatCurrency(amount: number, currency: string) {
+  try {
+    return new Intl.NumberFormat('tr-TR', { style: 'currency', currency: currency || 'TRY' }).format(amount);
+  } catch (e) {
+    return `${currency || 'TRY'} ${amount.toLocaleString()}`;
+  }
+}
 
 // --- Types ---
 interface Expense {
@@ -65,6 +68,7 @@ interface Expense {
   recurrenceInterval?: 'monthly' | 'weekly' | 'yearly';
   nextRecurrenceDate?: string;
   parentId?: string;
+  emailId?: string;
 }
 
 interface UserProfile {
@@ -75,13 +79,13 @@ interface UserProfile {
   monthlyIncome: number;
   currency: string;
   categories?: string[];
-  syncFolders?: string; // legacy
-  syncFrequencyDays?: number; // legacy
   syncLabels?: string;
   syncFrequency?: 'daily' | 'weekly' | 'monthly' | 'manual';
+  processedEmailIds?: string[];
+  budgets?: Record<string, number>;
 }
 
-const DEFAULT_CATEGORIES = ['Food', 'Commute', 'Office', 'Entertainment', 'Health', 'Travel', 'Utilities', 'Taxes', 'Subscription', 'Other'];
+const DEFAULT_CATEGORIES = ['Yemek', 'Ulaşım', 'Ofis', 'Eğlence', 'Sağlık', 'Seyahat', 'Faturalar', 'Vergi', 'Abonelik', 'Diğer'];
 
 // --- Components ---
 
@@ -98,7 +102,7 @@ const LoadingScreen = () => (
       </div>
     </motion.div>
     <h2 className="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">BudgetAI</h2>
-    <p className="text-slate-500 text-sm mt-2">Starting Engine...</p>
+    <p className="text-slate-500 text-sm mt-2">Sistem Başlatılıyor...</p>
   </div>
 );
 
@@ -119,7 +123,7 @@ const AuthScreen = () => (
           transition={{ delay: 0.1 }}
           className="text-4xl font-semibold text-white tracking-tight"
         >
-          Master your money.
+          Paranıza Hükmedin.
         </motion.h1>
         <motion.p 
           initial={{ y: 20, opacity: 0 }}
@@ -127,7 +131,7 @@ const AuthScreen = () => (
           transition={{ delay: 0.2 }}
           className="text-gray-400"
         >
-          AI-powered tracking, categorization, and tax optimization for personal and corporate use.
+          Kişisel ve kurumsal kullanım için yapay zeka destekli takip, kategorizasyon ve vergi optimizasyonu.
         </motion.p>
       </div>
 
@@ -139,7 +143,7 @@ const AuthScreen = () => (
         className="w-full py-4 bg-white text-slate-900 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-slate-200 transition-colors shadow-xl"
       >
         <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-        Continue with Google
+        Google ile Devam Et
       </motion.button>
     </div>
   </div>
@@ -169,7 +173,7 @@ export default function App() {
           if (docSnap.exists()) {
             setProfile(docSnap.data() as UserProfile);
           } else {
-            const newProfile = {
+            const newProfile: UserProfile = {
               uid: u.uid,
               email: u.email || '',
               displayName: u.displayName || 'User',
@@ -238,7 +242,7 @@ export default function App() {
         <div className="flex items-center gap-4">
           <div className="px-4 py-2 bg-white/5 border border-white/10 rounded-full hidden sm:flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-            <span className="text-xs font-medium text-slate-400 uppercase tracking-widest leading-none mt-0.5">Gemini Active</span>
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-widest leading-none mt-0.5">Gemini Aktif</span>
           </div>
           <button 
             onClick={logout}
@@ -273,10 +277,10 @@ export default function App() {
 
       {/* Navigation */}
       <nav className="fixed bottom-8 left-6 right-6 h-16 bg-white/5 backdrop-blur-2xl rounded-[2rem] border border-white/10 px-6 flex items-center justify-between z-40 shadow-2xl">
-        <NavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard />} label="Home" />
-        <NavButton active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} icon={<Receipt />} label="List" />
-        <NavButton active={activeTab === 'insights'} onClick={() => setActiveTab('insights')} icon={<PieChart />} label="AI" />
-        <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings />} label="Misc" />
+        <NavButton active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard />} label="Ana Sayfa" />
+        <NavButton active={activeTab === 'expenses'} onClick={() => setActiveTab('expenses')} icon={<Receipt />} label="Liste" />
+        <NavButton active={activeTab === 'insights'} onClick={() => setActiveTab('insights')} icon={<PieChart />} label="Yapay Zeka" />
+        <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings />} label="Ayarlar" />
       </nav>
 
       {/* Modals */}
@@ -344,7 +348,7 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
             merchant: rec.merchant,
             category: rec.category,
             date: rec.nextRecurrenceDate,
-            description: rec.description || `Recurring (${rec.merchant})`,
+            description: rec.description || `Düzenli İşlem (${rec.merchant})`,
             isCorporate: rec.isCorporate,
             createdAt: serverTimestamp(),
             parentId: rec.id
@@ -379,7 +383,7 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
     try {
       const emails = await fetchRecentReceiptEmails({
           frequency: profile?.syncFrequency || 'monthly',
-          folder: profile?.syncLabels || profile?.syncFolders || ''
+          folder: profile?.syncLabels || ''
       }, () => {
           setSyncMessage('Gmail ile bağlandı. Faturalar aranıyor...');
       });
@@ -390,6 +394,8 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
       }
       setSyncMessage(`${emails.length} e-posta işleniyor...`);
       const cats = profile?.categories || DEFAULT_CATEGORIES;
+      const processedIds = new Set(profile?.processedEmailIds || []);
+      const newProcessedIds: string[] = [];
       let added = 0;
       let skipped = 0;
       
@@ -407,17 +413,45 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
       };
 
       for (const email of emails) {
+        if (processedIds.has(email.id)) {
+           skipped++;
+           continue; // Already processed
+        }
+
         if (!isLikelyReceipt(email.subject || '', email.text || '') && (email.pdfAttachments?.length || 0) === 0) {
            skipped++;
+           // We will mark it as processed so we don't evaluate it again
+           newProcessedIds.push(email.id);
+           processedIds.add(email.id);
+           if (profile) {
+             const updatedProcessedIds = [...(profile.processedEmailIds || []), email.id].slice(-1000);
+             await setDoc(doc(db, 'users', profile.uid), { ...profile, processedEmailIds: updatedProcessedIds });
+             profile.processedEmailIds = updatedProcessedIds;
+           }
            continue; // Skip emails that clearly don't look like a receipt
         }
         
         try {
           const extractedResults = await extractExpenseFromEmail(`Subject: ${email.subject || 'No Subject'}\n\n${email.text}`, email.pdfAttachments || [], cats);
+          
+          const seen = new Set();
           for (const extracted of extractedResults) {
             if (extracted && extracted.amount > 0) {
+              const key = `${extracted.amount}-${extracted.merchant}-${extracted.date}`;
+              if (seen.has(key)) continue;
+              
+              // Check if already in the DB to prevent duplicates
+              const isDuplicate = expenses.some(e => e.amount === (typeof extracted.amount === 'string' ? parseFloat(extracted.amount) : extracted.amount) && e.date === extracted.date && e.merchant.toLowerCase() === (extracted.merchant || '').toLowerCase());
+              if (isDuplicate) {
+                  skipped++;
+                  continue;
+              }
+              
+              seen.add(key);
+
               await addDoc(collection(db, 'expenses'), {
                 userId: profile?.uid,
+                emailId: email.id,
                 amount: typeof extracted.amount === 'string' ? parseFloat(extracted.amount) : extracted.amount,
                 merchant: extracted.merchant || 'Unknown',
                 category: extracted.category || 'Other',
@@ -430,8 +464,17 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
               added++;
             }
           }
-          // Daha fazla bekleyerek kota limitini aşmamaya çalış.
-          await new Promise(resolve => setTimeout(resolve, 3000));
+          newProcessedIds.push(email.id); // Mark AI parse success
+          processedIds.add(email.id);
+          
+          if (profile) {
+              const updatedProcessedIds = [...(profile.processedEmailIds || []), email.id].slice(-1000);
+              await setDoc(doc(db, 'users', profile.uid), { ...profile, processedEmailIds: updatedProcessedIds });
+              profile.processedEmailIds = updatedProcessedIds;
+          }
+
+          // AI Studio limits API calls. To prevent 429 Resource Exhausted, we must enforce a ~15 Requests Per Minute limit.
+          await new Promise(resolve => setTimeout(resolve, 6500));
         } catch (aiErr: any) {
           console.error("Email parsing error:", aiErr);
           const errMsg = aiErr?.message || "";
@@ -440,7 +483,20 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
           }
         }
       }
-      setSyncMessage(`${added} yeni işlem eklendi! ${skipped ? `(${skipped} ilgisiz e-posta atlandı)` : ''}`);
+
+      if (profile && newProcessedIds.length > 0) {
+        // Fallback or final update is handled incrementally now, but we can do one final flush if needed
+        // Keep the last 1000 processed IDs to avoid blowing up the Firestore document size
+        const currentStored = profile.processedEmailIds || [];
+        if (newProcessedIds.some(id => !currentStored.includes(id))) {
+           const updatedProcessedIds = [...new Set([...currentStored, ...newProcessedIds])].slice(-1000);
+           await setDoc(doc(db, 'users', profile.uid), { ...profile, processedEmailIds: updatedProcessedIds });
+           // Object mutation handles local state tracking for now
+           profile.processedEmailIds = updatedProcessedIds;
+        }
+      }
+
+      setSyncMessage(`${added} yeni işlem eklendi! ${skipped ? `(${skipped} ilgisiz/eski e-posta atlandı)` : ''}`);
       setTimeout(() => setSyncMessage(''), 3000);
     } catch (e: any) {
       console.error(e);
@@ -470,16 +526,16 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-6">
             <div>
-              <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Monthly Budget</p>
-              <h2 className="text-3xl font-bold text-white">₺{(profile?.monthlyIncome || 0).toLocaleString()}</h2>
+              <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">Aylık Bütçe</p>
+              <h2 className="text-3xl font-bold text-white">{formatCurrency(profile?.monthlyIncome || 0, profile?.currency || 'TRY')}</h2>
             </div>
           </div>
           
           <div className="space-y-4">
             <div className="p-3 bg-white/5 rounded-xl border border-white/5">
               <div className="flex justify-between text-xs mb-2">
-                 <span className="text-slate-400">Spent{profile?.monthlyIncome ? ` (${((totalSpent/profile.monthlyIncome)*100).toFixed(0)}%)` : ''}</span>
-                 <span className="font-medium text-white">₺{totalSpent.toLocaleString()}</span>
+                 <span className="text-slate-400">Harcanan{profile?.monthlyIncome ? ` (${((totalSpent/profile.monthlyIncome)*100).toFixed(0)}%)` : ''}</span>
+                 <span className="font-medium text-white">{formatCurrency(totalSpent, profile?.currency || 'TRY')}</span>
               </div>
               <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
                  <div className="bg-violet-500 h-full" style={{ width: `${Math.min(profile?.monthlyIncome ? (totalSpent/profile.monthlyIncome)*100 : 0, 100)}%` }}></div>
@@ -487,8 +543,8 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
             </div>
             <div className="p-3 bg-white/5 rounded-xl border border-white/5">
               <div className="flex justify-between text-xs mb-2">
-                 <span className="text-slate-400">Remaining</span>
-                 <span className="font-medium text-white">₺{remaining.toLocaleString()}</span>
+                 <span className="text-slate-400">Kalan</span>
+                 <span className="font-medium text-white">{formatCurrency(remaining, profile?.currency || 'TRY')}</span>
               </div>
               <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
                  <div className="bg-cyan-500 h-full" style={{ width: `${Math.min(profile?.monthlyIncome ? (remaining/profile.monthlyIncome)*100 : 100, 100)}%` }}></div>
@@ -504,17 +560,17 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
           <div className="w-8 h-8 rounded-full bg-violet-500/20 flex items-center justify-center">
             <Mail className="w-4 h-4 text-violet-400" />
           </div>
-          <h3 className="text-violet-400 text-xs font-bold uppercase tracking-wider">E-Invoice Sync</h3>
+          <h3 className="text-violet-400 text-xs font-bold uppercase tracking-wider">E-Fatura Senkronizasyonu</h3>
         </div>
         <p className="text-sm text-slate-300 leading-relaxed mb-4">
-          {syncMessage || 'Sync receipts directly from your linked Gmail account using AI.'}
+          {syncMessage || 'Bağlı Gmail hesabınızdan makbuzları yapay zeka kullanarak doğrudan senkronize edin.'}
         </p>
         <button 
            onClick={handleSyncEmails}
            disabled={syncingEmails}
            className="w-full py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-sm font-semibold transition-colors disabled:opacity-50"
         >
-          {syncingEmails ? 'Syncing...' : 'Sync Now'}
+          {syncingEmails ? 'Senkronize Ediliyor...' : 'Şimdi Senkronize Et'}
         </button>
       </div>
 
@@ -522,11 +578,11 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
       <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h3 className="text-lg font-bold text-white">Spending Analysis</h3>
-            <p className="text-sm text-slate-400 capitalize">{format(new Date(), 'MMMM yyyy')} Overview</p>
+            <h3 className="text-lg font-bold text-white">Harcama Analizi</h3>
+            <p className="text-sm text-slate-400 capitalize">{format(new Date(), 'MMMM yyyy')} Özeti</p>
           </div>
           <div className="flex gap-2">
-            <div className="px-3 py-1 bg-white/10 rounded text-xs text-white">All</div>
+            <div className="px-3 py-1 bg-white/10 rounded text-xs text-white">Tümü</div>
           </div>
         </div>
         <div className="h-48 mb-8 flex items-center justify-center px-2">
@@ -562,41 +618,52 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
                     />
                 </motion.div>
             ) : (
-                <p className="text-slate-500 text-sm">No data yet. Add an expense.</p>
+                <p className="text-slate-500 text-sm">Henüz veri yok. İşlem ekleyin.</p>
             )}
         </div>
         <div className="grid grid-cols-2 gap-4">
-          {Object.entries(categoryData).slice(0, 4).map(([cat, val]: any, i) => (
-            <div key={cat} className="bg-white/5 rounded-xl p-4 border border-white/5">
-              <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Category {i + 1}</span>
-              <div className="flex justify-between items-center">
-                <span className="font-medium truncate mr-2" title={cat}>{cat}</span>
-                <span className="text-sm font-bold text-slate-300">₺{val.toLocaleString()}</span>
+          {Object.entries(categoryData).slice(0, 4).map(([cat, val]: any, i) => {
+            const budget = profile?.budgets?.[cat];
+            const pct = budget ? Math.min((val / budget) * 100, 100) : 0;
+            return (
+            <div key={cat} className="bg-white/5 rounded-xl p-4 border border-white/5 flex flex-col justify-between">
+              <div>
+                <span className="text-[10px] text-slate-500 font-bold uppercase block mb-1">Kategori {i + 1}</span>
+                <div className="flex justify-between items-center">
+                  <span className="font-medium truncate mr-2" title={cat}>{cat}</span>
+                  <span className="text-sm font-bold text-slate-300">{formatCurrency(val, profile?.currency || 'TRY')} {budget ? `/ ${formatCurrency(budget, profile?.currency || 'TRY')}` : ''}</span>
+                </div>
               </div>
+              {budget ? (
+                <div className="w-full bg-white/10 rounded-full h-1.5 mt-3">
+                  <div className={`h-1.5 rounded-full ${pct > 90 ? 'bg-red-500' : pct > 75 ? 'bg-amber-500' : 'bg-violet-500'}`} style={{ width: `${pct}%` }}></div>
+                </div>
+              ) : null}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
       {/* Corporate Summary */}
       {profile?.isCorporate && (
         <div className="bg-violet-600/10 border border-violet-500/20 rounded-2xl p-5">
-          <h3 className="text-violet-400 text-xs font-bold uppercase tracking-wider mb-3">Tax AI Analysis</h3>
+          <h3 className="text-violet-400 text-xs font-bold uppercase tracking-wider mb-3">YZ Vergi Analizi</h3>
           <p className="text-sm text-slate-300 leading-relaxed mb-4">
-            You have {corporateExpenses.length} corporate items this month. Potential tax deductions: <span className="font-bold text-white">₺{corporateExpenses.reduce((s, e) => s + e.amount, 0).toLocaleString()}</span>
+            Bu ay {corporateExpenses.length} adet kurumsal işleminiz var. Potansiyel vergi indirimi: <span className="font-bold text-white">{formatCurrency(corporateExpenses.reduce((s, e) => s + e.amount, 0), profile?.currency || 'TRY')}</span>
           </p>
           <button 
              onClick={() => setActiveTab('insights')}
              className="w-full py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-sm font-semibold transition-colors"
           >
-            View Tax Insights
+            Vergi Öngörülerini Gör
           </button>
         </div>
       )}
 
       {/* Recent List */}
       <div className="bg-white/5 border border-white/10 rounded-2xl p-5 flex-1">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Recent Transactions</h3>
+        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">Son İşlemler</h3>
         <div className="space-y-4">
           {expenses.slice(0, 5).map(exp => (
             <ExpenseItem key={exp.id} expense={exp} />
@@ -623,6 +690,22 @@ function ExpenseListView({ expenses, profile }: { expenses: Expense[], profile: 
     if (dateTo && exp.date > dateTo) return false;
 
     return true;
+  }).sort((a, b) => {
+    const timeA = new Date(a.date).getTime();
+    const timeB = new Date(b.date).getTime();
+    if (timeB === timeA) {
+       return (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0);
+    }
+    return timeB - timeA;
+  });
+
+  // UI level deduplication for existing duplicates in the database
+  const seenIds = new Set<string>();
+  const deduplicatedFilteredExpenses = filteredExpenses.filter(e => {
+     const identifier = `${e.amount}-${e.merchant?.toLowerCase()}-${e.date}`;
+     if (seenIds.has(identifier)) return false;
+     seenIds.add(identifier);
+     return true;
   });
 
   const categories = profile?.categories || DEFAULT_CATEGORIES;
@@ -636,31 +719,31 @@ function ExpenseListView({ expenses, profile }: { expenses: Expense[], profile: 
     >
       <div className="flex flex-col gap-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-2xl font-semibold">Transactions</h2>
+          <h2 className="text-2xl font-semibold">İşlemler</h2>
           <div className="flex bg-white/5 rounded-xl p-1">
-            <button onClick={() => setFilterType('All')} className={`px-4 py-2 rounded-lg text-xs font-medium ${filterType === 'All' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-white transition-colors'}`}>All</button>
-            <button onClick={() => setFilterType('Personal')} className={`px-4 py-2 rounded-lg text-xs font-medium ${filterType === 'Personal' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-white transition-colors'}`}>Personal</button>
-            <button onClick={() => setFilterType('Corporate')} className={`px-4 py-2 rounded-lg text-xs font-medium ${filterType === 'Corporate' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-white transition-colors'}`}>Work</button>
+            <button onClick={() => setFilterType('All')} className={`px-4 py-2 rounded-lg text-xs font-medium ${filterType === 'All' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-white transition-colors'}`}>Tümü</button>
+            <button onClick={() => setFilterType('Personal')} className={`px-4 py-2 rounded-lg text-xs font-medium ${filterType === 'Personal' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-white transition-colors'}`}>Kişisel</button>
+            <button onClick={() => setFilterType('Corporate')} className={`px-4 py-2 rounded-lg text-xs font-medium ${filterType === 'Corporate' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-white transition-colors'}`}>İş</button>
           </div>
         </div>
 
         {/* Filters */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 bg-white/5 p-4 rounded-2xl border border-white/5">
           <div>
-            <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1">Category</label>
+            <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1">Kategori</label>
             <select 
               value={filterCategory}
               onChange={e => setFilterCategory(e.target.value)}
               className="w-full bg-slate-800 rounded-lg p-2 border border-white/10 text-white outline-none focus:border-violet-500/50 appearance-none text-xs"
             >
-              <option value="All">All Categories</option>
+              <option value="All">Tüm Kategoriler</option>
               {categories.map(c => (
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1">From</label>
+            <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1">Başlangıç</label>
             <input 
               type="date"
               value={dateFrom}
@@ -669,7 +752,7 @@ function ExpenseListView({ expenses, profile }: { expenses: Expense[], profile: 
             />
           </div>
           <div>
-            <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1">To</label>
+            <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1">Bitiş</label>
             <input 
               type="date"
               value={dateTo}
@@ -681,13 +764,13 @@ function ExpenseListView({ expenses, profile }: { expenses: Expense[], profile: 
       </div>
 
       <div className="space-y-4">
-        {filteredExpenses.length === 0 && (
+        {deduplicatedFilteredExpenses.length === 0 && (
           <div className="text-center py-20 bg-white/5 rounded-[2rem] border border-dashed border-white/10">
             <Receipt className="w-12 h-12 text-gray-700 mx-auto mb-4" />
-            <p className="text-gray-400">No transactions match your filters.</p>
+            <p className="text-gray-400">Filtrelerinizle eşleşen işlem yok.</p>
           </div>
         )}
-        {filteredExpenses.map(exp => (
+        {deduplicatedFilteredExpenses.map(exp => (
           <ExpenseItem key={exp.id} expense={exp} detail />
         ))}
       </div>
@@ -732,10 +815,10 @@ function ExpenseItem({ expense, detail = false }: { expense: Expense, detail?: b
           </div>
         </div>
         <div className="text-right flex flex-col items-end gap-1">
-          <span className="text-xs font-bold text-slate-300">-₺{expense.amount.toLocaleString()}</span>
+          <span className="text-xs font-bold text-slate-300">-{formatCurrency(expense.amount, expense.currency)}</span>
           <div className="flex gap-1">
-            {expense.isCorporate && <div className="px-1.5 py-0.5 rounded bg-violet-500/20 text-[8px] font-bold text-violet-400 uppercase">Corp</div>}
-            {expense.isRecurring && <div className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-[8px] font-bold text-cyan-400 uppercase">{expense.recurrenceInterval === 'yearly' ? 'Yr' : expense.recurrenceInterval === 'weekly' ? 'Wk' : 'Mo'}</div>}
+            {expense.isCorporate && <div className="px-1.5 py-0.5 rounded bg-violet-500/20 text-[8px] font-bold text-violet-400 uppercase">Kurumsal</div>}
+            {expense.isRecurring && <div className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-[8px] font-bold text-cyan-400 uppercase">{expense.recurrenceInterval === 'yearly' ? 'Yıl' : expense.recurrenceInterval === 'weekly' ? 'Hafta' : 'Ay'}</div>}
           </div>
         </div>
       </div>
@@ -746,7 +829,7 @@ function ExpenseItem({ expense, detail = false }: { expense: Expense, detail?: b
             <div className="text-[11px] text-violet-200/70 leading-relaxed bg-violet-500/10 p-3 rounded-lg border border-violet-500/20">
               <div className="flex items-center gap-1.5 mb-1 text-violet-400 font-semibold">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>AI Tax Advice</span>
+                <span>Yapay Zeka Vergi Önerisi</span>
               </div>
               {advice}
             </div>
@@ -757,7 +840,7 @@ function ExpenseItem({ expense, detail = false }: { expense: Expense, detail?: b
               className="text-[10px] text-slate-500 flex items-center gap-1 hover:text-violet-400 transition-colors"
             >
               <Sparkles className="w-3 h-3" />
-              {loadingAdvice ? 'Analyzing...' : 'Get AI Tax Insight'}
+              {loadingAdvice ? 'Analiz Ediliyor...' : 'YZ Vergi Önerisi Al'}
             </button>
           )}
         </div>
@@ -795,11 +878,11 @@ function InsightsView({ expenses, profile }: { expenses: Expense[], profile: Use
           <div className="w-8 h-8 bg-cyan-500 rounded-full flex items-center justify-center">
             <Sparkles className="w-5 h-5 text-white" />
           </div>
-          <h3 className="text-sm font-bold text-cyan-400 uppercase tracking-tighter">Gemini Insight Engine</h3>
+          <h3 className="text-sm font-bold text-cyan-400 uppercase tracking-tighter">Gemini Öngörü Motoru</h3>
         </div>
         <div className="relative z-10">
           <p className="text-slate-300 text-sm leading-relaxed max-w-[280px] italic">
-            "I can analyze your transactions to find savings opportunities and, if applicable, flag items for tax deduction."
+            "İşlemlerinizi analiz ederek tasarruf fırsatları bulabilir ve uygun durumlarda vergi indirimi için kalemleri işaretleyebilirim."
           </p>
           <div className="mt-6 pt-4 border-t border-white/10">
             <button 
@@ -807,7 +890,7 @@ function InsightsView({ expenses, profile }: { expenses: Expense[], profile: Use
               disabled={loading}
               className="w-full py-3 bg-cyan-500 hover:bg-cyan-400 text-slate-900 rounded-lg text-sm font-bold transition-transform active:scale-95 flex items-center justify-center gap-2"
             >
-              {loading ? 'Analyzing data...' : 'Run Financial Analysis'}
+              {loading ? 'Veriler analiz ediliyor...' : 'Finansal Analizi Başlat'}
             </button>
           </div>
         </div>
@@ -822,7 +905,7 @@ function InsightsView({ expenses, profile }: { expenses: Expense[], profile: Use
           <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mx-auto mb-6">
             <TrendingDown className="text-gray-600 w-8 h-8" />
           </div>
-          <p className="text-gray-500 text-sm">Analyze your patterns to find savings opportunities and tax benefits.</p>
+          <p className="text-gray-500 text-sm">Tasarruf fırsatları ve vergi avantajları bulmak için alışkanlıklarınızı analiz edin.</p>
         </div>
       )}
     </motion.div>
@@ -871,7 +954,7 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
       exit={{ opacity: 0 }}
       className="space-y-6"
     >
-      <h2 className="text-2xl font-semibold mb-8 text-white">Settings</h2>
+      <h2 className="text-2xl font-semibold mb-8 text-white">Ayarlar</h2>
       
       <div className="space-y-4">
         <div className="bg-white/5 rounded-3xl p-6 border border-white/10 flex items-center justify-between">
@@ -880,8 +963,8 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
                <Briefcase className="w-6 h-6" />
             </div>
             <div>
-              <h4 className="font-medium text-white">Corporate Account</h4>
-              <p className="text-xs text-slate-500">Enable tax optimization features</p>
+              <h4 className="font-medium text-white">Kurumsal Hesap</h4>
+              <p className="text-xs text-slate-500">Vergi optimizasyonu özelliklerini etkinleştirin</p>
             </div>
           </div>
           <button 
@@ -897,7 +980,7 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
 
         <div className="bg-white/5 rounded-3xl p-6 border border-white/10 space-y-4">
            <div>
-             <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-2 font-bold">Monthly Income (₺)</label>
+             <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-2 font-bold">Aylık Gelir (₺)</label>
              <input 
                type="number"
                defaultValue={profile?.monthlyIncome}
@@ -912,26 +995,55 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
 
         <div className="bg-white/5 rounded-3xl p-6 border border-white/10 space-y-4">
            <div>
-             <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-4 font-bold">Custom Categories</label>
-             <div className="flex flex-wrap gap-2 mb-6">
+             <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-4 font-bold">Özel Kategoriler & Bütçeler</label>
+             <div className="flex flex-col gap-3 mb-6">
                {(profile?.categories || DEFAULT_CATEGORIES).map((cat, i) => (
-                 <EditableCategoryBadge 
-                   key={i} 
-                   cat={cat} 
-                   onDelete={async () => {
-                     if (!profile) return;
-                     const newCats = (profile.categories || DEFAULT_CATEGORIES).filter((_, idx) => idx !== i);
-                     await setDoc(doc(db, 'users', profile.uid), { ...profile, categories: newCats });
-                   }}
-                   onSave={async (newVal) => {
-                     if (!profile) return;
-                     if (!newVal || newVal === cat) return;
-                     const newCats = [...(profile.categories || DEFAULT_CATEGORIES)];
-                     if (newCats.includes(newVal)) return;
-                     newCats[i] = newVal;
-                     await setDoc(doc(db, 'users', profile.uid), { ...profile, categories: newCats });
-                   }}
-                 />
+                 <div key={i} className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full bg-white/5 rounded-xl p-3 border border-white/10">
+                   <div className="flex-1">
+                     <EditableCategoryBadge 
+                       cat={cat} 
+                       onDelete={async () => {
+                         if (!profile) return;
+                         const newCats = (profile.categories || DEFAULT_CATEGORIES).filter((_, idx) => idx !== i);
+                         await setDoc(doc(db, 'users', profile.uid), { ...profile, categories: newCats });
+                       }}
+                       onSave={async (newVal) => {
+                         if (!profile) return;
+                         if (!newVal || newVal === cat) return;
+                         const newCats = [...(profile.categories || DEFAULT_CATEGORIES)];
+                         if (newCats.includes(newVal)) return;
+                         newCats[i] = newVal;
+                         const newBudgets = { ...(profile.budgets || {}) };
+                         if (newBudgets[cat]) {
+                           newBudgets[newVal] = newBudgets[cat];
+                           delete newBudgets[cat];
+                         }
+                         await setDoc(doc(db, 'users', profile.uid), { ...profile, categories: newCats, budgets: newBudgets });
+                       }}
+                     />
+                   </div>
+                   <div className="flex items-center gap-2">
+                      <label className="text-xs text-slate-400">Aylık Bütçe (₺):</label>
+                      <input 
+                        type="number"
+                        min="0"
+                        placeholder="Limitsiz"
+                        value={profile?.budgets?.[cat] || ''}
+                        onChange={async (e) => {
+                           if (!profile) return;
+                           const newBudgets = { ...(profile.budgets || {}) };
+                           const val = parseInt(e.target.value);
+                           if (isNaN(val) || val <= 0) {
+                             delete newBudgets[cat];
+                           } else {
+                             newBudgets[cat] = val;
+                           }
+                           await setDoc(doc(db, 'users', profile.uid), { ...profile, budgets: newBudgets });
+                        }}
+                        className="w-24 bg-white/10 rounded-lg px-2 py-1 text-sm text-white outline-none focus:border-violet-500 transition-colors"
+                      />
+                   </div>
+                 </div>
                ))}
              </div>
              <form 
@@ -951,14 +1063,14 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
              >
                <input 
                  name="newCategory"
-                 placeholder="New Category..."
+                 placeholder="Yeni Kategori..."
                  className="flex-1 bg-white/5 rounded-xl px-4 py-3 border border-white/10 text-white outline-none focus:border-violet-500/50 transition-colors text-sm"
                />
                <button 
                  type="submit"
                  className="px-4 py-3 bg-violet-600 hover:bg-violet-500 text-white rounded-xl font-bold transition-colors text-sm"
                >
-                 Add
+                 Ekle
                </button>
              </form>
            </div>
@@ -966,12 +1078,12 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
 
         <div className="bg-white/5 rounded-3xl p-6 border border-white/10 space-y-6">
            <div>
-             <h4 className="font-semibold text-white mb-2">Email Receipt Sync</h4>
-             <p className="text-xs text-slate-500 mb-4">Configure how we search your Gmail for e-receipts and invoices.</p>
+             <h4 className="font-semibold text-white mb-2">E-posta Fatura Senkronizasyonu</h4>
+             <p className="text-xs text-slate-500 mb-4">Gmail'inizde e-fatura ve makbuz arama yöntemini yapılandırın.</p>
              
              <div className="space-y-4">
                <div>
-                 <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-2 font-bold">Sync Frequency</label>
+                 <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-2 font-bold">Senkronizasyon Sıklığı</label>
                  <select 
                    value={profile?.syncFrequency || 'monthly'}
                    onChange={async (e) => {
@@ -980,28 +1092,28 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
                    }}
                    className="w-full bg-white/5 rounded-xl p-4 border border-white/10 text-white outline-none focus:border-violet-500/50 transition-colors appearance-none"
                  >
-                   <option value="daily">Daily</option>
-                   <option value="weekly">Weekly</option>
-                   <option value="monthly">Monthly</option>
-                   <option value="3months">Last 3 Months (Full Scan)</option>
-                   <option value="manual">Manual Only</option>
+                   <option value="daily">Günlük</option>
+                   <option value="weekly">Haftalık</option>
+                   <option value="monthly">Aylık</option>
+                   <option value="3months">Son 3 Ay (Tam Tarama)</option>
+                   <option value="manual">Sadece Manuel</option>
                  </select>
-                 <p className="text-[10px] text-slate-500 mt-1">How often you want to scan for receipts.</p>
+                 <p className="text-[10px] text-slate-500 mt-1">Makbuzların ne sıklıkla taranmasını istersiniz.</p>
                </div>
                
                <div>
-                 <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-2 font-bold">Specific Gmail Labels (Optional)</label>
+                 <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-2 font-bold">Özel Gmail Etiketleri (İsteğe Bağlı)</label>
                  <input 
                    type="text"
-                   placeholder="e.g. receipts, purchases"
-                   defaultValue={profile?.syncLabels || profile?.syncFolders || ''}
+                   placeholder="örneğin makbuzlar, satın alımlar"
+                   defaultValue={profile?.syncLabels || ''}
                    onBlur={async (e) => {
                      const val = e.target.value.trim();
                      if (profile) await setDoc(doc(db, 'users', profile.uid), { ...profile, syncLabels: val });
                    }}
                    className="w-full bg-white/5 rounded-xl p-4 border border-white/10 text-white outline-none focus:border-violet-500/50 transition-colors"
                  />
-                 <p className="text-[10px] text-slate-500 mt-1">Limit scanning to specific Gmail labels (comma-separated).</p>
+                 <p className="text-[10px] text-slate-500 mt-1">Taramayı belirli Gmail etiketleriyle sınırlandırın (virgülle ayrılmış).</p>
                </div>
              </div>
            </div>
@@ -1011,7 +1123,7 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
            onClick={logout}
            className="w-full py-4 rounded-3xl border border-red-500/20 text-red-500 text-sm font-medium hover:bg-red-500/10 transition-colors mt-8"
         >
-          Logout
+          Çıkış Yap
         </button>
       </div>
     </motion.div>
@@ -1050,7 +1162,7 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
       setUseCamera(true);
     } catch (err) {
       console.error("Camera access denied", err);
-      alert("Camera access denied or not available.");
+      alert("Kamera erişimi reddedildi veya kullanılamıyor.");
     }
   };
 
@@ -1163,7 +1275,7 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
         className="bg-[#0f0f0f] w-full max-w-lg rounded-t-[2.5rem] sm:rounded-[2.5rem] p-8 border-t sm:border border-white/10 text-white max-h-[90vh] overflow-y-auto"
       >
         <div className="flex justify-between items-center mb-8">
-          <h2 className="text-xl font-semibold">Add Transaction</h2>
+          <h2 className="text-xl font-semibold">İşlem Ekle</h2>
           <button onClick={onClose} className="p-2 bg-white/5 rounded-full"><X className="w-5 h-5" /></button>
         </div>
 
@@ -1173,22 +1285,22 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
               <div className="w-12 h-12 rounded-2xl bg-cyan-600/10 flex items-center justify-center group-hover:scale-110 transition-transform">
                 <Camera className="text-cyan-500 w-6 h-6" />
               </div>
-              <p className="text-xs text-slate-400 group-hover:text-cyan-500 transition-colors">Use Camera</p>
+              <p className="text-xs text-slate-400 group-hover:text-cyan-500 transition-colors">Kamerayı Kullan</p>
             </button>
             <label className="h-32 border-2 border-dashed border-white/10 rounded-[1.5rem] flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-white/5 transition-colors group">
               <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
               <div className="w-12 h-12 rounded-2xl bg-cyan-600/10 flex items-center justify-center group-hover:scale-110 transition-transform">
                 <Upload className="text-cyan-500 w-6 h-6" />
               </div>
-              <p className="text-xs text-slate-400 group-hover:text-cyan-500 transition-colors">Upload File</p>
+              <p className="text-xs text-slate-400 group-hover:text-cyan-500 transition-colors">Dosya Yükle</p>
             </label>
           </div>
         ) : (
           <div className="mb-8 relative rounded-[1.5rem] overflow-hidden bg-black aspect-[4/3] flex flex-col shadow-inner">
             <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
             <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent flex justify-center gap-3">
-              <button type="button" onClick={stopCamera} className="px-5 py-2.5 bg-white/20 hover:bg-white/30 backdrop-blur text-white rounded-xl text-sm font-semibold transition-colors">Cancel</button>
-              <button type="button" onClick={captureImage} className="px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-900 rounded-xl text-sm font-bold flex-1 transition-colors">Capture</button>
+              <button type="button" onClick={stopCamera} className="px-5 py-2.5 bg-white/20 hover:bg-white/30 backdrop-blur text-white rounded-xl text-sm font-semibold transition-colors">İptal</button>
+              <button type="button" onClick={captureImage} className="px-5 py-2.5 bg-cyan-500 hover:bg-cyan-400 text-slate-900 rounded-xl text-sm font-bold flex-1 transition-colors">Fotoğraf Çek</button>
             </div>
           </div>
         )}
@@ -1196,7 +1308,7 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="flex gap-4">
              <div className="flex-1">
-                <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Amount (₺)</label>
+                <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Tutar (₺)</label>
                 <input 
                   autoFocus
                   required
@@ -1209,23 +1321,23 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
                 />
              </div>
              <div className="w-32">
-                <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Type</label>
+                <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Tür</label>
                 <button 
                   type="button"
                   onClick={() => setIsCorporate(!isCorporate)}
                   className={`w-full h-[60px] rounded-xl flex items-center justify-center gap-2 border transition-all ${isCorporate ? 'bg-violet-500/10 border-violet-500 text-violet-400' : 'bg-white/5 border-white/10 text-slate-400'}`}
                 >
                   {isCorporate ? <Briefcase className="w-4 h-4" /> : <UserIcon className="w-4 h-4" />}
-                  <span className="text-[10px] font-bold uppercase">{isCorporate ? 'Work' : 'Pers'}</span>
+                  <span className="text-[10px] font-bold uppercase">{isCorporate ? 'İş' : 'Kişisel'}</span>
                 </button>
              </div>
           </div>
 
           <div>
-             <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Merchant</label>
+             <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Satıcı / İşletme</label>
              <input 
                required
-               placeholder="Store, Service, Restaurant..."
+               placeholder="Mağaza, Hizmet, Restoran..."
                value={formData.merchant}
                onChange={e => setFormData({ ...formData, merchant: e.target.value })}
                className="w-full bg-white/5 rounded-xl p-4 border border-white/10 text-white outline-none focus:border-violet-500/50"
@@ -1234,7 +1346,7 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-               <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Category</label>
+               <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Kategori</label>
                <select 
                  value={formData.category}
                  onChange={e => setFormData({ ...formData, category: e.target.value })}
@@ -1246,7 +1358,7 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
                </select>
             </div>
             <div>
-               <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Date</label>
+               <label className="text-[10px] text-slate-500 uppercase tracking-widest block mb-1 font-bold">Tarih</label>
                <input 
                  type="date"
                  value={formData.date}
@@ -1264,7 +1376,7 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
                  onChange={e => setIsRecurring(e.target.checked)}
                  className="w-5 h-5 accent-violet-500 rounded bg-white/10 border-white/10"
                />
-               <span className="text-sm font-bold text-white">Recurring Expense</span>
+               <span className="text-sm font-bold text-white">Düzenli Gider</span>
              </label>
              {isRecurring && (
                <div className="pl-8">
@@ -1273,9 +1385,9 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
                    onChange={e => setRecurrenceInterval(e.target.value as 'monthly' | 'weekly' | 'yearly')}
                    className="w-full bg-white/5 rounded-xl p-3 border border-white/10 text-white outline-none focus:border-violet-500/50 appearance-none text-sm"
                  >
-                   <option value="weekly">Weekly</option>
-                   <option value="monthly">Monthly</option>
-                   <option value="yearly">Yearly</option>
+                   <option value="weekly">Haftalık</option>
+                   <option value="monthly">Aylık</option>
+                   <option value="yearly">Yıllık</option>
                  </select>
                </div>
              )}
@@ -1285,7 +1397,7 @@ function AddExpenseModal({ onClose, userId, isCorporateDefault, categories }: { 
              disabled={loading}
              className="w-full py-4 bg-gradient-to-r from-violet-600 to-cyan-500 text-white rounded-2xl font-bold hover:brightness-110 transition-all shadow-xl shadow-violet-500/20 disabled:opacity-50"
           >
-            {loading ? 'Processing...' : 'Save Transaction'}
+            {loading ? 'İşleniyor...' : 'İşlemi Kaydet'}
           </button>
         </form>
       </motion.div>

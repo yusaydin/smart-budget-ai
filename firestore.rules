@@ -38,10 +38,10 @@ service cloud.firestore {
           && (!('monthlyIncome' in data) || data.monthlyIncome == null || data.monthlyIncome is number)
           && (!('currency' in data) || data.currency == null || data.currency is string)
           && (!('categories' in data) || data.categories == null || (data.categories is list && data.categories.size() <= 50))
-          && (!('syncFolders' in data) || data.syncFolders == null || data.syncFolders is string)
-          && (!('syncFrequencyDays' in data) || data.syncFrequencyDays == null || data.syncFrequencyDays is number)
           && (!('syncLabels' in data) || data.syncLabels == null || data.syncLabels is string)
-          && (!('syncFrequency' in data) || data.syncFrequency == null || data.syncFrequency is string);
+          && (!('syncFrequency' in data) || data.syncFrequency == null || data.syncFrequency is string)
+          && (!('processedEmailIds' in data) || data.processedEmailIds == null || (data.processedEmailIds is list && data.processedEmailIds.size() <= 1000))
+          && (!('budgets' in data) || data.budgets == null || data.budgets is map);
       }
     }
 

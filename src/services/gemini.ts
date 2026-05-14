@@ -13,11 +13,11 @@ export interface ExtractedExpense {
 }
 
 export async function extractExpenseFromImage(base64Image: string): Promise<ExtractedExpense> {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-2.5-flash";
   
   const prompt = `Analyze this receipt or invoice. Extract the total amount, currency, category, merchant name, date, and a brief description of items. 
   Also, determine if this could potentially be a corporate/business expense (e.g., office supplies, travel, client meal).
-  Return the data in the specified JSON format.`;
+  Return the data in the specified JSON format. The extracted text MUST be in Turkish.`;
 
   const response = await ai.models.generateContent({
     model,
@@ -51,7 +51,7 @@ export async function extractExpenseFromImage(base64Image: string): Promise<Extr
 }
 
 export async function extractExpenseFromEmail(emailText: string, pdfAttachments: string[], categories: string[]): Promise<ExtractedExpense[]> {
-  const model = "gemini-3.1-pro-preview"; // Use pro-preview for better multimodal parsing
+  const model = "gemini-2.5-flash"; // Flash has much higher quota limits
   
   const promptText = `Analyze this email or text receipt, and any attached PDFs. Extract the total amount, currency, category, merchant name, date, and a brief description.
   Determine if this could potentially be a corporate/business expense.
@@ -101,7 +101,7 @@ export async function extractExpenseFromEmail(emailText: string, pdfAttachments:
 }
 
 export async function generateMonthlyReport(expenses: any[], income: number, isCorporate: boolean) {
-  const model = "gemini-3.1-pro-preview";
+  const model = "gemini-2.5-flash";
   
   const prompt = `As a financial assistant, analyze the following monthly expenses for a ${isCorporate ? 'corporate' : 'personal'} user.
   Income: ${income}
@@ -113,7 +113,7 @@ export async function generateMonthlyReport(expenses: any[], income: number, isC
   3. Specific advice for ${isCorporate ? 'tax deductions and corporate efficiency' : 'savings and budget management'}.
   4. A motivating closing statement.
   
-  Format the response in Markdown.`;
+  Format the response in Markdown. The response MUST be completely in Turkish.`;
 
   const response = await ai.models.generateContent({
     model,
@@ -124,10 +124,10 @@ export async function generateMonthlyReport(expenses: any[], income: number, isC
 }
 
 export async function getCorporateAdvice(expense: any) {
-  const model = "gemini-3-flash-preview";
+  const model = "gemini-2.5-flash";
   const prompt = `Analyze this expense for a corporate user: ${JSON.stringify(expense)}.
   Can this be tax deductible? What are the requirements for this type of expense in a corporate context?
-  Keep it concise.`;
+  Keep it concise. The response MUST be completely in Turkish.`;
 
   const response = await ai.models.generateContent({
     model,
