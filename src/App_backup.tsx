@@ -218,6 +218,9 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
     return acc;
   }, {});
 
+  const [syncingEmails, setSyncingEmails] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
+
   useEffect(() => {
     const checkRecurring = async () => {
       if (!profile || expenses.length === 0) return;
@@ -263,6 +266,150 @@ function Dashboard({ profile, expenses, setActiveTab }: { profile: UserProfile |
     };
     checkRecurring();
   }, [profile, expenses]);
+
+  const handleSyncEmails = async () => {
+    setSyncingEmails(true);
+    setSyncMessage('Gmail\'e bağlanılıyor...');
+    try {
+      const emails = await fetchRecentReceiptEmails({
+          frequency: profile?.syncFrequency || '6months',
+          folder: profile?.syncLabels || ''
+      }, () => {
+          setSyncMessage('Gmail ile bağlandı. Faturalar aranıyor...');
+      });
+      if (emails.length === 0) {
+        setSyncMessage('Yeni fatura bulunamadı.');
+        setTimeout(() => setSyncMessage(''), 3000);
+        return;
+      }
+      setSyncMessage(`${emails.length} e-posta işleniyor...`);
+      const cats = profile?.categories || DEFAULT_CATEGORIES;
+      const processedIds = new Set(profile?.processedEmailIds || []);
+      const newProcessedIds: string[] = [];
+      let added = 0;
+      let skipped = 0;
+      
+      const isLikelyReceipt = (subject: string, text: string) => {
+        const lowerSubject = subject.toLowerCase();
+        const lowerText = text.toLowerCase();
+        
+        const keywords = ['receipt', 'invoice', 'fatura', 'order', 'sipariş', 'payment', 'ödeme', 'makbuz', 'purchase', 'ticket', 'bilet'];
+        // Quick short-circuit if subject matches
+        if (keywords.some(k => lowerSubject.includes(k))) return true;
+        // Or if the first chunk of text mentions it
+        if (keywords.some(k => lowerText.substring(0, 800).includes(k))) return true;
+        
+        return false;
+      };
+
+      for (const email of emails) {
+        if (processedIds.has(email.id)) {
+           skipped++;
+           continue; // Already processed
+        }
+
+        if (!isLikelyReceipt(email.subject || '', email.text || '') && (email.pdfAttachments?.length || 0) === 0) {
+           skipped++;
+           // We will mark it as processed so we don't evaluate it again
+           newProcessedIds.push(email.id);
+           processedIds.add(email.id);
+           if (profile) {
+             const updatedProcessedIds = [...(profile.processedEmailIds || []), email.id].slice(-1000);
+             await setDoc(doc(db, 'users', profile.uid), { ...profile, processedEmailIds: updatedProcessedIds });
+             profile.processedEmailIds = updatedProcessedIds;
+           }
+           continue; // Skip emails that clearly don't look like a receipt
+        }
+        
+        try {
+          const truncatedText = (email.text || '').substring(0, 15000);
+          const extractedResults = await extractExpenseFromEmail(`Subject: ${email.subject || 'No Subject'}\n\n${truncatedText}`, email.pdfAttachments || [], cats);
+          
+          const seen = new Set();
+          for (const extracted of extractedResults) {
+            if (extracted && extracted.amount > 0) {
+              const key = `${extracted.amount}-${extracted.merchant}-${extracted.date}`;
+              if (seen.has(key)) continue;
+              
+              // Check if already in the DB to prevent duplicates
+              const isDuplicate = expenses.some(e => e.amount === (typeof extracted.amount === 'string' ? parseFloat(extracted.amount) : extracted.amount) && e.date === extracted.date && e.merchant.toLowerCase() === (extracted.merchant || '').toLowerCase());
+              if (isDuplicate) {
+                  skipped++;
+                  continue;
+              }
+              
+              seen.add(key);
+
+              const extractedCurrency = extracted.currency || profile?.currency || 'TRY';
+              const extractedAmount = typeof extracted.amount === 'string' ? parseFloat(extracted.amount) : extracted.amount;
+
+              await addDoc(collection(db, 'expenses'), {
+                userId: profile?.uid,
+                emailId: email.id,
+                amount: extractedAmount,
+                currency: extractedCurrency,
+                merchant: extracted.merchant || 'Unknown',
+                category: extracted.category || 'Other',
+                date: extracted.date || format(new Date(), 'yyyy-MM-dd'),
+                description: extracted.description || 'E-posta Faturası',
+                isCorporate: !!extracted.isCorporatePotential,
+                createdAt: serverTimestamp(),
+                syncStatus: 'pending'
+              });
+              added++;
+            }
+          }
+          newProcessedIds.push(email.id); // Mark AI parse success
+          processedIds.add(email.id);
+          
+          if (profile) {
+              const updatedProcessedIds = [...(profile.processedEmailIds || []), email.id].slice(-1000);
+              await setDoc(doc(db, 'users', profile.uid), { ...profile, processedEmailIds: updatedProcessedIds });
+              profile.processedEmailIds = updatedProcessedIds;
+          }
+
+          // AI Studio limits API calls. To prevent 429 Resource Exhausted, we must enforce a ~15 Requests Per Minute limit.
+          await new Promise(resolve => setTimeout(resolve, 6500));
+        } catch (aiErr: any) {
+          console.error("Email parsing error:", aiErr);
+          const errMsg = aiErr?.message || "";
+          if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
+            throw new Error("Yapay zeka API kota limitine ulaşıldı. Lütfen daha sonra tekrar senkronize edin.");
+          }
+        }
+      }
+
+      if (profile && newProcessedIds.length > 0) {
+        // Fallback or final update is handled incrementally now, but we can do one final flush if needed
+        // Keep the last 1000 processed IDs to avoid blowing up the Firestore document size
+        const currentStored = profile.processedEmailIds || [];
+        if (newProcessedIds.some(id => !currentStored.includes(id))) {
+           const updatedProcessedIds = [...new Set([...currentStored, ...newProcessedIds])].slice(-1000);
+           await setDoc(doc(db, 'users', profile.uid), { ...profile, processedEmailIds: updatedProcessedIds });
+           // Object mutation handles local state tracking for now
+           profile.processedEmailIds = updatedProcessedIds;
+        }
+      }
+
+      setSyncMessage(`${added} yeni işlem eklendi! ${skipped ? `(${skipped} ilgisiz/eski e-posta atlandı)` : ''}`);
+      setTimeout(() => setSyncMessage(''), 3000);
+    } catch (e: any) {
+      const isPopupClosed = e?.message?.includes('popup-closed');
+      if (!isPopupClosed) {
+        console.error(e);
+      }
+      let errMsg = e.message || 'Senkronizasyon başarısız. İzinleri kontrol edin.';
+      if (isPopupClosed) {
+        errMsg = 'Erişim verilmedi veya işlem iptal edildi.';
+      } else if (errMsg.includes('Gmail API has not been used')) {
+        errMsg = 'Gmail API kapalı. Google Cloud Console\'dan Gmail API\'yi etkinleştirin.';
+      }
+      setSyncMessage(errMsg);
+      setTimeout(() => setSyncMessage(''), 8000);
+    } finally {
+      setSyncingEmails(false);
+    }
+  };
 
   return (
     <motion.div 
@@ -515,189 +662,19 @@ function ExpenseListView({ expenses, profile }: { expenses: Expense[], profile: 
 
 
 
-function SyncView({ profile, pendingExpenses, allExpenses }: { profile: UserProfile | null, pendingExpenses: Expense[], allExpenses: Expense[] }) {
-  const [syncingEmails, setSyncingEmails] = useState(false);
-  const [syncMessage, setSyncMessage] = useState('');
+function InsightsView({ expenses, profile }: { expenses: Expense[], profile: UserProfile | null }) {
+  const [report, setReport] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const handleSyncEmails = async () => {
-    setSyncingEmails(true);
-    setSyncMessage('Gmail\'e bağlanılıyor...');
+  const generate = async () => {
+    setLoading(true);
     try {
-      const emails = await fetchRecentReceiptEmails({
-          frequency: profile?.syncFrequency || '6months',
-          folder: profile?.syncLabels || ''
-      }, () => {
-          setSyncMessage('Gmail ile bağlandı. Faturalar aranıyor...');
-      });
-      if (emails.length === 0) {
-        setSyncMessage('Yeni fatura bulunamadı.');
-        setTimeout(() => setSyncMessage(''), 3000);
-        return;
-      }
-      setSyncMessage(`${emails.length} e-posta işleniyor...`);
-      const cats = profile?.categories || DEFAULT_CATEGORIES;
-      const processedIds = new Set(profile?.processedEmailIds || []);
-      const newProcessedIds: string[] = [];
-      let added = 0;
-      let skipped = 0;
-      
-      const isLikelyReceipt = (subject: string, text: string) => {
-        const lowerSubject = subject.toLowerCase();
-        const lowerText = text.toLowerCase();
-        
-        const keywords = ['receipt', 'invoice', 'fatura', 'order', 'sipariş', 'payment', 'ödeme', 'makbuz', 'purchase', 'ticket', 'bilet'];
-        // Quick short-circuit if subject matches
-        if (keywords.some(k => lowerSubject.includes(k))) return true;
-        // Or if the first chunk of text mentions it
-        if (keywords.some(k => lowerText.substring(0, 800).includes(k))) return true;
-        
-        return false;
-      };
-
-      for (const email of emails) {
-        if (processedIds.has(email.id)) {
-           skipped++;
-           continue; // Already processed
-        }
-
-        if (!isLikelyReceipt(email.subject || '', email.text || '') && (email.pdfAttachments?.length || 0) === 0) {
-           skipped++;
-           // We will mark it as processed so we don't evaluate it again
-           newProcessedIds.push(email.id);
-           processedIds.add(email.id);
-           if (profile) {
-             const updatedProcessedIds = [...(profile.processedEmailIds || []), email.id].slice(-1000);
-             await setDoc(doc(db, 'users', profile.uid), { ...profile, processedEmailIds: updatedProcessedIds });
-             profile.processedEmailIds = updatedProcessedIds;
-           }
-           continue; // Skip emails that clearly don't look like a receipt
-        }
-        
-        try {
-          const truncatedText = (email.text || '').substring(0, 15000);
-          const extractedResults = await extractExpenseFromEmail(`Subject: ${email.subject || 'No Subject'}\n\n${truncatedText}`, email.pdfAttachments || [], cats);
-          
-          const seen = new Set();
-          for (const extracted of extractedResults) {
-            if (extracted && extracted.amount > 0) {
-              const key = `${extracted.amount}-${extracted.merchant}-${extracted.date}`;
-              if (seen.has(key)) continue;
-              
-              // Check if already in the DB to prevent duplicates
-              const isDuplicate = allExpenses.some(e => e.amount === (typeof extracted.amount === 'string' ? parseFloat(extracted.amount) : extracted.amount) && e.date === extracted.date && e.merchant.toLowerCase() === (extracted.merchant || '').toLowerCase());
-              if (isDuplicate) {
-                  skipped++;
-                  continue;
-              }
-              
-              seen.add(key);
-
-              const extractedCurrency = extracted.currency || profile?.currency || 'TRY';
-              const extractedAmount = typeof extracted.amount === 'string' ? parseFloat(extracted.amount) : extracted.amount;
-
-              await addDoc(collection(db, 'expenses'), {
-                userId: profile?.uid,
-                emailId: email.id,
-                amount: extractedAmount,
-                currency: extractedCurrency,
-                merchant: extracted.merchant || 'Unknown',
-                category: extracted.category || 'Other',
-                date: extracted.date || format(new Date(), 'yyyy-MM-dd'),
-                description: extracted.description || 'E-posta Faturası',
-                isCorporate: !!extracted.isCorporatePotential,
-                createdAt: serverTimestamp(),
-                syncStatus: 'pending'
-              });
-              added++;
-            }
-          }
-          newProcessedIds.push(email.id); // Mark AI parse success
-          processedIds.add(email.id);
-          
-          if (profile) {
-              const updatedProcessedIds = [...(profile.processedEmailIds || []), email.id].slice(-1000);
-              await setDoc(doc(db, 'users', profile.uid), { ...profile, processedEmailIds: updatedProcessedIds });
-              profile.processedEmailIds = updatedProcessedIds;
-          }
-
-          // AI Studio limits API calls. To prevent 429 Resource Exhausted, we must enforce a ~15 Requests Per Minute limit.
-          await new Promise(resolve => setTimeout(resolve, 6500));
-        } catch (aiErr: any) {
-          console.error("Email parsing error:", aiErr);
-          const errMsg = aiErr?.message || "";
-          if (errMsg.includes('429') || errMsg.includes('quota') || errMsg.includes('RESOURCE_EXHAUSTED')) {
-            throw new Error("Yapay zeka API kota limitine ulaşıldı. Lütfen daha sonra tekrar senkronize edin.");
-          }
-        }
-      }
-
-      if (profile && newProcessedIds.length > 0) {
-        // Fallback or final update is handled incrementally now, but we can do one final flush if needed
-        // Keep the last 1000 processed IDs to avoid blowing up the Firestore document size
-        const currentStored = profile.processedEmailIds || [];
-        if (newProcessedIds.some(id => !currentStored.includes(id))) {
-           const updatedProcessedIds = [...new Set([...currentStored, ...newProcessedIds])].slice(-1000);
-           await setDoc(doc(db, 'users', profile.uid), { ...profile, processedEmailIds: updatedProcessedIds });
-           // Object mutation handles local state tracking for now
-           profile.processedEmailIds = updatedProcessedIds;
-        }
-      }
-
-      setSyncMessage(`${added} yeni işlem eklendi! ${skipped ? `(${skipped} ilgisiz/eski e-posta atlandı)` : ''}`);
-      setTimeout(() => setSyncMessage(''), 3000);
-    } catch (e: any) {
-      const isPopupClosed = e?.message?.includes('popup-closed');
-      if (!isPopupClosed) {
-        console.error(e);
-      }
-      let errMsg = e.message || 'Senkronizasyon başarısız. İzinleri kontrol edin.';
-      if (isPopupClosed) {
-        errMsg = 'Erişim verilmedi veya işlem iptal edildi.';
-      } else if (errMsg.includes('Gmail API has not been used')) {
-        errMsg = 'Gmail API kapalı. Google Cloud Console\'dan Gmail API\'yi etkinleştirin.';
-      }
-      setSyncMessage(errMsg);
-      setTimeout(() => setSyncMessage(''), 8000);
+      const resp = await generateMonthlyReport(expenses.slice(0, 20), profile?.monthlyIncome || 0, profile?.isCorporate || false);
+      setReport(resp);
+    } catch (e) {
+      console.error(e);
     } finally {
-      setSyncingEmails(false);
-    }
-  };
-
-  const handleConfirm = async (e: Expense) => {
-     try {
-       await updateDoc(doc(db, 'expenses', e.id), { syncStatus: 'confirmed' });
-     } catch(err) {
-       handleFirestoreError(err, OperationType.UPDATE, 'expenses');
-     }
-  };
-
-  const handleReview = (e: Expense) => {
-      handleConfirm(e);
-  };
-
-  const deletePendingEmails = async () => {
-    if (!profile) return;
-    if (confirm("Sadece E-posta'dan okunan harcamalar silinecek. Onaylıyor musunuz?")) {
-      try {
-        const emailExpenses = allExpenses.filter(e => e.emailId);
-        if (emailExpenses.length === 0) {
-           alert('Silinecek e-posta harcaması bulunamadı.');
-           return;
-        }
-
-        const batch = writeBatch(db);
-        for (const exp of emailExpenses) {
-           batch.delete(doc(db, 'expenses', exp.id));
-        }
-
-        const userRef = doc(db, 'users', profile.uid);
-        batch.update(userRef, { processedEmailIds: [] });
-
-        await batch.commit();
-        alert('E-posta harcamaları kaldırıldı ve e-posta okuma geçmişi sıfırlandı.');
-      } catch (e: any) {
-        handleFirestoreError(e, OperationType.DELETE, 'expenses');
-      }
+      setLoading(false);
     }
   };
 
@@ -706,97 +683,55 @@ function SyncView({ profile, pendingExpenses, allExpenses }: { profile: UserProf
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0 }}
-      className="space-y-6 pt-4 pb-20"
+      className="space-y-lg pt-4"
     >
-      <div className="bg-surface border border-surface-variant rounded-xl p-6 shadow-sm flex flex-col gap-4">
-         <div className="flex items-start gap-4">
-           <div className="w-10 h-10 rounded-full bg-secondary-container/10 border border-secondary/20 flex items-center justify-center shrink-0">
-             <span className="material-symbols-outlined text-secondary">mail</span>
-           </div>
-           <div className="flex-grow">
-             <h3 className="font-label-lg font-bold text-on-surface">Bağlı Hesap</h3>
-             <p className="font-body-md text-on-surface-variant">{profile?.email || 'Kullanıcı Bulunamadı'}</p>
-             <div className="flex items-center gap-2 mt-2">
-                <span className="text-secondary text-sm cursor-pointer hover:underline">Değiştir</span>
-                <span className="text-on-surface-variant text-sm flex items-center before:content-[''] before:w-2 before:h-2 before:bg-tertiary-fixed before:rounded-full before:mr-2">Aktif Bağlantı</span>
-             </div>
-           </div>
-         </div>
-         <div className="mt-4 flex flex-wrap gap-4">
-           <button 
-             onClick={handleSyncEmails}
-             disabled={syncingEmails}
-             className="px-6 py-2.5 bg-[#0D47A1] hover:bg-[#0D47A1]/90 text-white rounded-lg font-label-md transition-colors disabled:opacity-50 active:scale-95 flex items-center justify-center gap-2 w-max"
-           >
-             <span className={"material-symbols-outlined" + (syncingEmails ? " animate-spin" : "")}>sync</span> 
-             {syncingEmails ? 'Senkronize Ediliyor...' : 'Şimdi Senkronize Et'}
-           </button>
-           <button 
-             onClick={deletePendingEmails}
-             className="px-6 py-2.5 bg-error/10 hover:bg-error/20 text-error rounded-lg font-label-md transition-colors active:scale-95 flex items-center justify-center gap-2 w-max"
-           >
-             <span className="material-symbols-outlined">delete</span> 
-             E-posta Harcamalarını Sıfırla
-           </button>
-         </div>
-         <p className="text-sm text-on-surface-variant mt-2">{syncMessage || 'Senkronizasyon bekleniyor...'}</p>
-      </div>
-
-      <div>
-        <div className="flex justify-between items-end mb-4 px-1">
-          <div>
-            <h2 className="font-display-sm text-on-surface font-semibold">Taranan E-Faturalar</h2>
-            <p className="font-body-sm text-on-surface-variant">Gmail'den son okunan faturalar.</p>
+      <div className="bg-surface-container-lowest border border-surface-variant rounded-xl p-6 flex flex-col shadow-[0px_4px_12px_rgba(49,124,184,0.08)] relative overflow-hidden">
+        <span className="material-symbols-outlined absolute top-8 right-8 text-primary/10 text-[120px] select-none pointer-events-none">insights</span>
+        <div className="flex items-center gap-2 mb-4 relative z-10">
+          <div className="w-10 h-10 bg-primary-container rounded-full flex items-center justify-center">
+            <span className="material-symbols-outlined text-[20px] text-primary">auto_awesome</span>
+          </div>
+          <h3 className="font-label-md text-primary uppercase tracking-wider">Gemini Finansal Analiz</h3>
+        </div>
+        <div className="relative z-10 w-full md:w-2/3">
+          <p className="font-body-md text-on-surface-variant leading-relaxed">
+            Harcamalarınızı yapay zeka ile analiz ederek kişiselleştirilmiş tasarruf fırsatları keşfedebilir,
+            {profile?.isCorporate ? ' vergi indirimi potansiyeli taşıyan kalemleri detaylandırabilirsiniz.' : ' bütçe optimizasyonu için eyleme geçirilebilir öneriler alabilirsiniz.'}
+          </p>
+          <div className="mt-lg pt-4 border-t border-surface-variant flex">
+            <button 
+              onClick={generate}
+              disabled={loading}
+              className="bg-primary hover:bg-primary/90 text-on-primary rounded-full px-6 py-3 font-label-md transition-all active:scale-95 shadow-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:active:scale-100"
+            >
+              {loading ? (
+                 <>
+                   <span className="material-symbols-outlined animate-spin-slow">change_circle</span>
+                   Veriler analiz ediliyor...
+                 </>
+              ) : (
+                 <>
+                   <span className="material-symbols-outlined">analytics</span>
+                   Finansal Rapor Oluştur
+                 </>
+              )}
+            </button>
           </div>
         </div>
-
-        <div className="space-y-4">
-          {pendingExpenses.length === 0 ? (
-             <div className="p-8 text-center bg-surface border border-surface-variant rounded-xl text-on-surface-variant text-sm flex flex-col items-center">
-               <span className="material-symbols-outlined text-[48px] text-surface-dim mb-4">inbox</span>
-               Bekleyen yeni e-fatura bulunamadı.
-             </div>
-          ) : (
-             pendingExpenses.map(e => (
-               <div key={e.id} className="bg-surface border border-surface-variant rounded-xl p-5 shadow-sm">
-                 <div className="flex justify-between items-start mb-4">
-                   <div className="flex items-center gap-3">
-                     <div className="w-12 h-12 rounded-full bg-surface-container border border-surface-variant flex items-center justify-center shrink-0">
-                       <span className="material-symbols-outlined text-on-surface-variant">
-                         {e.category === 'Ulaşım' ? 'directions_car' : e.category === 'Yemek' ? 'restaurant' : e.category === 'Alışveriş' ? 'storefront' : 'receipt_long'}
-                       </span>
-                     </div>
-                     <div>
-                       <h4 className="font-label-lg font-bold text-on-surface">{e.merchant}</h4>
-                       <p className="font-body-sm text-on-surface-variant">{format(new Date(e.date), 'MMM d, yyyy')}</p>
-                     </div>
-                   </div>
-                   <div className="text-right">
-                     <span className="font-display-md font-bold text-on-surface">{e.currency === 'USD' ? '$' : e.currency === 'TRY' ? '₺' : ''}{e.amount.toFixed(2)}</span>
-                   </div>
-                 </div>
-                 
-                 <div className="grid grid-cols-2 gap-3">
-                   <button 
-                     onClick={() => handleReview(e)}
-                     className="py-2.5 rounded-lg border border-surface-variant text-on-surface hover:bg-surface-container transition-colors font-label-md cursor-pointer flex justify-center items-center gap-2"
-                   >
-                     <span className="material-symbols-outlined text-[18px]">edit</span>
-                     İncele
-                   </button>
-                   <button 
-                     onClick={() => handleConfirm(e)}
-                     className="py-2.5 rounded-lg bg-primary hover:bg-primary/90 text-white transition-colors font-label-md cursor-pointer flex justify-center items-center gap-2 shadow-sm"
-                   >
-                     <span className="material-symbols-outlined text-[18px]">check</span>
-                     Onayla
-                   </button>
-                 </div>
-               </div>
-             ))
-          )}
-        </div>
       </div>
+
+      {report ? (
+        <div className="bg-surface border border-surface-variant rounded-xl p-6 prose max-w-none prose-sm text-on-surface prose-headings:text-primary prose-a:text-tertiary">
+           <Markdown>{report}</Markdown>
+        </div>
+      ) : (
+        <div className="text-center py-24 px-10 bg-surface-container-lowest rounded-xl border border-surface-variant border-dashed">
+          <div className="w-16 h-16 bg-surface-container rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xs">
+            <span className="material-symbols-outlined text-[32px] text-surface-dim">trending_up</span>
+          </div>
+          <p className="font-body-md text-on-surface-variant max-w-sm mx-auto">Detaylı finansal öngörüler, tasarruf fırsatları ve bütçe ipuçları için rapor oluşturun.</p>
+        </div>
+      )}
     </motion.div>
   );
 }
@@ -1085,7 +1020,6 @@ function SettingsView({ profile, toggleCorporate }: { profile: UserProfile | nul
 }
 
 function AddExpenseModal({ onClose, userId, profile, isCorporateDefault, categories }: { onClose: () => void, userId: string, profile: UserProfile | null, isCorporateDefault: boolean, categories: string[] }) {
-  const [step, setStep] = useState<'camera' | 'form'>('camera');
   const [loading, setLoading] = useState(false);
   const [isCorporate, setIsCorporate] = useState(isCorporateDefault);
   const [isRecurring, setIsRecurring] = useState(false);
@@ -1100,38 +1034,13 @@ function AddExpenseModal({ onClose, userId, profile, isCorporateDefault, categor
     description: ''
   });
 
-  const [flashOn, setFlashOn] = useState(false);
+  const [useCamera, setUseCamera] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
-    if (step === 'camera') {
-      startCamera();
-    } else {
-      stopCamera();
-    }
     return () => stopCamera();
-  }, [step]);
-
-  const toggleFlash = async () => {
-    if (!streamRef.current) return;
-    const track = streamRef.current.getVideoTracks()[0];
-    if (track) {
-      try {
-        const caps = track.getCapabilities() as any;
-        if (caps.torch !== undefined) {
-          await track.applyConstraints({
-            advanced: [{ torch: !flashOn } as any]
-          });
-          setFlashOn(!flashOn);
-        } else {
-          // No flash
-        }
-      } catch (err) {
-        console.error(err);
-      }
-    }
-  };
+  }, []);
 
   const startCamera = async () => {
     try {
@@ -1140,10 +1049,10 @@ function AddExpenseModal({ onClose, userId, profile, isCorporateDefault, categor
         videoRef.current.srcObject = stream;
       }
       streamRef.current = stream;
-      setFlashOn(false);
+      setUseCamera(true);
     } catch (err) {
       console.error("Camera access denied", err);
-      setStep('form');
+      alert("Kamera erişimi reddedildi veya kullanılamıyor.");
     }
   };
 
@@ -1152,6 +1061,7 @@ function AddExpenseModal({ onClose, userId, profile, isCorporateDefault, categor
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
+    setUseCamera(false);
   };
 
   const captureImage = () => {
@@ -1185,10 +1095,8 @@ function AddExpenseModal({ onClose, userId, profile, isCorporateDefault, categor
           setCurrency(extracted.currency.toUpperCase());
       }
       if (extracted.isCorporatePotential) setIsCorporate(true);
-      setStep('form');
     } catch (err) {
       console.error(err);
-      setStep('form');
     } finally {
       setLoading(false);
     }
@@ -1248,52 +1156,6 @@ function AddExpenseModal({ onClose, userId, profile, isCorporateDefault, categor
     }
   };
 
-  if (step === 'camera') {
-    return (
-      <motion.div 
-        initial={{ y: '100%' }}
-        animate={{ y: 0 }}
-        exit={{ y: '100%' }}
-        className="fixed inset-0 z-[100] bg-black flex flex-col"
-      >
-        <video ref={videoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-cover" />
-        
-        {/* Top Controls */}
-        <div className="absolute top-0 inset-x-0 p-6 pt-10 flex justify-between items-center bg-gradient-to-b from-black/50 to-transparent">
-          <button onClick={onClose} className="w-10 h-10 rounded-full bg-black/40 text-white flex items-center justify-center backdrop-blur hover:bg-black/60 transition-colors">
-            <span className="material-symbols-outlined">close</span>
-          </button>
-          <button onClick={() => setStep('form')} className="px-4 py-2 rounded-full bg-black/40 text-white font-label-md backdrop-blur hover:bg-black/60 transition-colors">
-            Manuel Gir
-          </button>
-        </div>
-
-        {/* Bottom Controls */}
-        <div className="absolute bottom-0 inset-x-0 pb-12 pt-8 px-12 flex justify-between items-center bg-gradient-to-t from-black/80 to-transparent">
-          <label className="w-12 h-12 rounded-full bg-white/20 text-white flex items-center justify-center backdrop-blur cursor-pointer hover:bg-white/30 transition-colors">
-             <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-             <span className="material-symbols-outlined text-[24px]">photo_library</span>
-          </label>
-          
-          <button onClick={captureImage} className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center relative hover:scale-105 transition-transform">
-             <div className="w-16 h-16 rounded-full bg-white/50 backdrop-blur" />
-          </button>
-
-          <button onClick={toggleFlash} className={`w-12 h-12 rounded-full bg-white/20 text-white flex items-center justify-center backdrop-blur hover:bg-white/30 transition-colors ${flashOn ? 'text-yellow-400' : ''}`}>
-             <span className="material-symbols-outlined text-[24px]">{flashOn ? 'flash_on' : 'flash_off'}</span>
-          </button>
-        </div>
-
-        {loading && (
-          <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50">
-            <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin mb-4" />
-            <p className="font-label-md text-white">Fiş işleniyor...</p>
-          </div>
-        )}
-      </motion.div>
-    );
-  }
-
   return (
     <motion.div 
       initial={{ opacity: 0 }}
@@ -1305,18 +1167,38 @@ function AddExpenseModal({ onClose, userId, profile, isCorporateDefault, categor
         initial={{ y: '100%' }}
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
-        className="bg-surface w-[100vw] sm:w-[512px] shrink-0 rounded-t-[2.5rem] sm:rounded-[2.5rem] p-6 border-t sm:border border-surface-variant shadow-[0px_8px_24px_rgba(49,124,184,0.12)] max-h-[90vh] overflow-y-auto relative"
+        className="bg-surface w-[100vw] sm:w-[512px] shrink-0 rounded-t-[2.5rem] sm:rounded-[2.5rem] p-6 border-t sm:border border-surface-variant shadow-[0px_8px_24px_rgba(49,124,184,0.12)] max-h-[90vh] overflow-y-auto"
       >
-        {loading && (
-           <div className="absolute inset-0 bg-surface/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
-             <div className="w-12 h-12 border-4 border-primary/30 border-t-primary rounded-full animate-spin mb-4" />
-             <p className="font-label-md text-primary">İşleniyor...</p>
-           </div>
-        )}
         <div className="flex justify-between items-center mb-6">
           <h2 className="font-headline-md text-headline-md text-on-surface">İşlem Ekle</h2>
           <button onClick={onClose} className="p-2 rounded-full hover:bg-surface-variant transition-colors"><span className="material-symbols-outlined text-[20px] text-on-surface-variant">close</span></button>
         </div>
+
+        {!useCamera ? (
+          <div className="mb-6 grid grid-cols-2 gap-4">
+            <button type="button" onClick={startCamera} className="h-32 border border-dashed border-primary/50 bg-primary-container/10 rounded-2xl flex flex-col items-center justify-center gap-2 hover:bg-primary-container/20 transition-colors group">
+              <div className="w-12 h-12 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center group-hover:scale-105 transition-transform">
+                <span className="material-symbols-outlined">photo_camera</span>
+              </div>
+              <p className="font-label-md text-primary">Kamerayı Kullan</p>
+            </button>
+            <label className="h-32 border border-dashed border-primary/50 bg-primary-container/10 rounded-2xl flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-primary-container/20 transition-colors group">
+              <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+              <div className="w-12 h-12 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center group-hover:scale-105 transition-transform">
+                <span className="material-symbols-outlined">upload</span>
+              </div>
+              <p className="font-label-md text-primary">Dosya Yükle</p>
+            </label>
+          </div>
+        ) : (
+          <div className="mb-6 relative rounded-2xl overflow-hidden bg-black w-full min-h-[300px] h-[50vh] max-h-[450px] shadow-inner">
+            <video ref={videoRef} autoPlay playsInline className="absolute inset-0 w-full h-full object-cover" />
+            <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black/80 to-transparent flex justify-center gap-3">
+              <button type="button" onClick={stopCamera} className="px-5 py-2.5 bg-white/20 hover:bg-white/30 backdrop-blur text-white rounded-xl text-sm font-semibold transition-colors">İptal</button>
+              <button type="button" onClick={captureImage} className="px-5 py-2.5 bg-primary hover:bg-primary/90 text-on-primary rounded-xl text-sm font-bold flex-1 transition-colors">Fotoğraf Çek</button>
+            </div>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex gap-4">

@@ -37,6 +37,7 @@ service cloud.firestore {
           && (!('isCorporate' in data) || data.isCorporate == null || data.isCorporate is bool)
           && (!('monthlyIncome' in data) || data.monthlyIncome == null || data.monthlyIncome is number)
           && (!('currency' in data) || data.currency == null || data.currency is string)
+          && (!('enableCurrencyConversion' in data) || data.enableCurrencyConversion == null || data.enableCurrencyConversion is bool)
           && (!('categories' in data) || data.categories == null || (data.categories is list && data.categories.size() <= 50))
           && (!('syncLabels' in data) || data.syncLabels == null || data.syncLabels is string)
           && (!('syncFrequency' in data) || data.syncFrequency == null || data.syncFrequency is string)
@@ -60,12 +61,15 @@ service cloud.firestore {
           && data.date is string
           && (!('description' in data) || data.description == null || data.description is string)
           && (!('currency' in data) || data.currency == null || data.currency is string)
+          && (!('originalAmount' in data) || data.originalAmount == null || data.originalAmount is number)
+          && (!('originalCurrency' in data) || data.originalCurrency == null || data.originalCurrency is string)
           && (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp)
           && (!('merchant' in data) || data.merchant == null || (data.merchant is string && data.merchant.size() <= 128))
           && (!('isCorporate' in data) || data.isCorporate == null || data.isCorporate is bool)
           && (!('isRecurring' in data) || data.isRecurring == null || data.isRecurring is bool)
           && (!('recurrenceInterval' in data) || data.recurrenceInterval == null || data.recurrenceInterval is string)
           && (!('nextRecurrenceDate' in data) || data.nextRecurrenceDate == null || data.nextRecurrenceDate is string)
+          && (!('emailId' in data) || data.emailId == null || data.emailId is string)
           && (!('parentId' in data) || data.parentId == null || data.parentId is string);
       }
     }

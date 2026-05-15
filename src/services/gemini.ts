@@ -63,7 +63,9 @@ export async function extractExpenseFromEmail(emailText: string, pdfAttachments:
   ${emailText}`;
 
   const parts: any[] = [{ text: promptText }];
-  for (const pdfBase64 of pdfAttachments) {
+  // Only process the first PDF to avoid payload/proxy size limits
+  if (pdfAttachments.length > 0) {
+    const pdfBase64 = pdfAttachments[0];
     if (pdfBase64 && pdfBase64.length > 10) {
       parts.push({ inlineData: { mimeType: "application/pdf", data: pdfBase64 } });
     }

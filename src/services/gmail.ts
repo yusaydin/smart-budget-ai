@@ -49,50 +49,101 @@ export async function fetchRecentReceiptEmails(options?: { frequency?: string, f
     else if (options?.frequency === 'weekly') days = 7;
     else if (options?.frequency === 'monthly') days = 30;
     else if (options?.frequency === '3months') days = 90;
+    else if (options?.frequency === '6months') days = 180;
 
     const daysAgo = new Date(today.setDate(today.getDate() - days));
-    let queryStr = `(category:purchases OR receipt OR invoice OR "your order" OR payment OR "fatura") after:${Math.floor(daysAgo.getTime() / 1000)}`;
+    let queryPurchasesStr = `category:purchases after:${Math.floor(daysAgo.getTime() / 1000)}`;
+    let queryOtherStr = `(receipt OR invoice OR "your order" OR payment OR "fatura") -category:purchases after:${Math.floor(daysAgo.getTime() / 1000)}`;
 
     if (options?.folder) {
       const labels = options.folder.split(',').map(l => l.trim()).filter(l => l);
       if (labels.length > 0) {
-        queryStr += ` (${labels.map(l => `label:"${l}"`).join(' OR ')})`;
+        const labelsQuery = `(${labels.map(l => `label:"${l}"`).join(' OR ')})`;
+        queryPurchasesStr += ` ${labelsQuery}`;
+        queryOtherStr += ` ${labelsQuery}`;
       }
     }
 
-    const query = encodeURIComponent(queryStr); 
+    const queryPurchases = encodeURIComponent(queryPurchasesStr); 
+    const queryOther = encodeURIComponent(queryOtherStr); 
     
-    // Fetching more to represent 3 months potentially
-    const searchRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=500`, {
-      headers: {
-        Authorization: `Bearer ${token}`
-      }
-    });
-
-    if (!searchRes.ok) {
-        if(searchRes.status === 401) {
-            localStorage.removeItem('gmailAccessToken');
-            localStorage.removeItem('gmailTokenExpiry');
-            throw new Error('Gmail session expired. Please try again.');
-        }
-        const errText = await searchRes.text();
-        let errMsg = "Failed to fetch messages";
-        try {
-          const parsed = JSON.parse(errText);
-          if (parsed.error?.message) {
-            errMsg = parsed.error.message;
+    // Fetching purchases first
+    let allMessages: any[] = [];
+    
+    let pageTokenPurchases = '';
+    let purchasesPages = 0;
+    while (purchasesPages < 5) {
+      const pageParam = pageTokenPurchases ? `&pageToken=${pageTokenPurchases}` : '';
+      const searchResPurchases = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${queryPurchases}&maxResults=500${pageParam}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+  
+      if (!searchResPurchases.ok) {
+          if(searchResPurchases.status === 401) {
+              localStorage.removeItem('gmailAccessToken');
+              localStorage.removeItem('gmailTokenExpiry');
+              throw new Error('Gmail session expired. Please try again.');
           }
-        } catch (e) {}
-        
-        throw new Error(`Gmail API Error: ${errMsg}. Ensure Gmail API is enabled for this project.`);
+          break;
+      }
+      const searchDataPurchases = await searchResPurchases.json();
+      if (searchDataPurchases.messages) {
+          allMessages = allMessages.concat(searchDataPurchases.messages);
+      }
+      if (searchDataPurchases.nextPageToken) {
+          pageTokenPurchases = searchDataPurchases.nextPageToken;
+          purchasesPages++;
+      } else {
+          break;
+      }
     }
 
-    const searchData = await searchRes.json();
-    
-    if (!searchData.messages) return [];
+    // Fetching the rest
+    let pageTokenOther = '';
+    let otherPages = 0;
+    while (otherPages < 3) {
+      const pageParam = pageTokenOther ? `&pageToken=${pageTokenOther}` : '';
+      const searchResOther = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${queryOther}&maxResults=500${pageParam}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+  
+      if (!searchResOther.ok && allMessages.length === 0) {
+          if(searchResOther.status === 401) {
+              localStorage.removeItem('gmailAccessToken');
+              localStorage.removeItem('gmailTokenExpiry');
+              throw new Error('Gmail session expired. Please try again.');
+          }
+          const errText = await searchResOther.text();
+          let errMsg = "Failed to fetch messages";
+          try {
+            const parsed = JSON.parse(errText);
+            if (parsed.error?.message) {
+              errMsg = parsed.error.message;
+            }
+          } catch (e) {}
+          throw new Error(`Gmail API Error: ${errMsg}. Ensure Gmail API is enabled for this project.`);
+      } else if (searchResOther.ok) {
+          const searchDataOther = await searchResOther.json();
+          if (searchDataOther.messages) {
+              const existingIds = new Set(allMessages.map(m => m.id));
+              const newM = searchDataOther.messages.filter((m: any) => !existingIds.has(m.id));
+              allMessages = allMessages.concat(newM);
+          }
+          if (searchDataOther.nextPageToken) {
+              pageTokenOther = searchDataOther.nextPageToken;
+              otherPages++;
+          } else {
+              break;
+          }
+      } else {
+          break;
+      }
+    }
+
+    if (allMessages.length === 0) return [];
 
     const emails = [];
-    for (const msg of searchData.messages) {
+    for (const msg of allMessages) {
       const msgRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}`, {
         headers: {
           Authorization: `Bearer ${token}`
@@ -135,6 +186,10 @@ async function extractEmailData(message: any, token: string): Promise<{subject: 
       if (part.mimeType === 'text/plain') {
         text += decodeBase64Url(part.body?.data || '');
       } else if (part.mimeType === 'application/pdf' && part.body?.attachmentId) {
+        if (part.body?.size > 2097152) {
+           console.log("PDF attachment too large, skipping");
+           continue; 
+        }
         // Fetch attachment
         try {
             const attRes = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${message.id}/attachments/${part.body.attachmentId}`, {
