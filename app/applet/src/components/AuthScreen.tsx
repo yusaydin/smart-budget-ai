@@ -30,8 +30,6 @@ export const AuthScreen = () => {
         setError('Bu e-posta adresi zaten kullanımda.');
       } else if (err.code === 'auth/operation-not-allowed') {
         setError('E-posta/Şifre girişi Firebase konsolundan etkinleştirilmemiş.');
-      } else if (err.code === 'auth/weak-password') {
-        setError('Şifre en az 6 karakter olmalıdır.');
       } else {
         setError(err.message || 'Bir hata oluştu.');
       }

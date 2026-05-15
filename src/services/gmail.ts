@@ -8,7 +8,7 @@ export interface FetchedEmail {
   pdfAttachments: string[];
 }
 
-export async function fetchRecentReceiptEmails(options?: { frequency?: string, folder?: string }, onConnected?: () => void): Promise<FetchedEmail[]> {
+export async function fetchRecentReceiptEmails(options?: { frequency?: string, folder?: string, background?: boolean }, onConnected?: () => void): Promise<FetchedEmail[]> {
   const provider = new GoogleAuthProvider();
   provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
   
@@ -16,6 +16,9 @@ export async function fetchRecentReceiptEmails(options?: { frequency?: string, f
   const tokenExpiry = localStorage.getItem('gmailTokenExpiry');
 
   if (!token || !tokenExpiry || new Date().getTime() > parseInt(tokenExpiry)) {
+    if (options?.background) {
+       throw new Error("INTERACTION_REQUIRED");
+    }
     try {
       const result = await signInWithPopup(auth, provider);
       const credential = GoogleAuthProvider.credentialFromResult(result);

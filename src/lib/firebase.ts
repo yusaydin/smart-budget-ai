@@ -20,7 +20,17 @@ async function testConnection() {
 }
 testConnection();
 
-export const signInWithGoogle = () => signInWithPopup(auth, googleProvider);
+export const signInWithGoogle = async () => {
+  googleProvider.addScope('https://www.googleapis.com/auth/gmail.readonly');
+  const result = await signInWithPopup(auth, googleProvider);
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+  const token = credential?.accessToken;
+  if (token) {
+    localStorage.setItem('gmailAccessToken', token);
+    localStorage.setItem('gmailTokenExpiry', (new Date().getTime() + 55 * 60 * 1000).toString());
+  }
+  return result;
+};
 export const logout = () => signOut(auth);
 
 export enum OperationType {

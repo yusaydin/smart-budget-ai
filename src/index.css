@@ -104,3 +104,25 @@ body {
     -ms-overflow-style: none;
     scrollbar-width: none;
 }
+
+.dark {
+  --color-primary: #cfe5ff;
+  --color-on-primary: #003456;
+  --color-primary-container: #004a7a;
+  --color-on-primary-container: #cfe5ff;
+  --color-background: #111418;
+  --color-on-background: #e2e2e6;
+  --color-surface: #111418;
+  --color-surface-dim: #111418;
+  --color-surface-bright: #37393e;
+  --color-surface-container-lowest: #0c0e12;
+  --color-surface-container-low: #181c20;
+  --color-surface-container: #1c2024;
+  --color-surface-container-high: #272a2f;
+  --color-surface-container-highest: #32353a;
+  --color-surface-variant: #414750;
+  --color-on-surface: #e2e2e6;
+  --color-on-surface-variant: #c0c7d1;
+  --color-outline: #8b919a;
+  --color-outline-variant: #414750;
+}

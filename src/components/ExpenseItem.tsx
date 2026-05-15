@@ -34,18 +34,18 @@ export function ExpenseItem({ expense, detail = false }: { expense: Expense, det
             {expense.merchant}
             {expense.isRecurring && <span className="material-symbols-outlined text-[14px] text-primary">event_repeat</span>}
           </h4>
-          <p className="font-body-sm text-outline flex items-center gap-1">
-            <span>{format(new Date(expense.date), 'MMM d', { locale: tr })}</span>
+          <p className="font-body-sm text-outline flex items-center gap-1.5">
+            <span className="whitespace-nowrap">{format(new Date(expense.date), 'MMM d', { locale: tr })}</span>
             <span>•</span>
-            <span>{expense.category}</span>
+            <span className="truncate">{expense.category}</span>
           </p>
         </div>
       </div>
-      <div className="text-right flex flex-col items-end gap-1">
+      <div className="text-right flex flex-col items-end gap-1 shrink-0 ml-2">
         <div className="flex flex-col items-end">
-          <span className="font-numeric-lg text-numeric-lg text-error">-{formatCurrency(expense.amount, expense.currency)}</span>
+          <span className="font-numeric-lg text-numeric-lg text-error whitespace-nowrap">-{formatCurrency(expense.amount, expense.currency)}</span>
           {expense.originalAmount && expense.originalCurrency && expense.originalCurrency !== expense.currency && (
-            <span className="text-label-md text-outline font-medium">({formatCurrency(expense.originalAmount, expense.originalCurrency)})</span>
+            <span className="text-label-md text-outline font-medium whitespace-nowrap">({formatCurrency(expense.originalAmount, expense.originalCurrency)})</span>
           )}
         </div>
         <div className="flex gap-1 mt-0.5">

@@ -22,10 +22,13 @@ export interface Expense {
 export interface UserProfile {
   uid: string;
   email: string;
+  phone?: string;
   displayName: string;
+  photoURL?: string;
   isCorporate: boolean;
   monthlyIncome: number;
   currency: string;
+  autoConvertCurrency?: boolean;
   categories?: string[];
   syncLabels?: string;
   syncFrequency?: 'daily' | 'weekly' | 'monthly' | '3months' | '6months' | 'manual';
