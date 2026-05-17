@@ -1,4 +1,4 @@
-import { auth } from '../lib/firebase';
+import { auth } from '../frontend/lib/firebase';
 import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 export interface FetchedEmail {
