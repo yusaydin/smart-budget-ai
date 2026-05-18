@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>BudgetAI - Dashboard</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-high": "#e9e8e9",
+                        "secondary-fixed": "#7cf8dd",
+                        "primary": "#162839",
+                        "surface-container-highest": "#e4e2e3",
+                        "secondary": "#006b5b",
+                        "outline-variant": "#c4c6cd",
+                        "inverse-surface": "#303032",
+                        "on-tertiary-container": "#c1a17d",
+                        "on-surface-variant": "#43474c",
+                        "primary-container": "#2c3e50",
+                        "primary-fixed": "#d1e4fb",
+                        "surface-tint": "#4e6073",
+                        "on-primary": "#ffffff",
+                        "on-secondary-container": "#007261",
+                        "on-primary-container": "#96a9be",
+                        "inverse-primary": "#b5c8df",
+                        "on-tertiary-fixed": "#291802",
+                        "secondary-container": "#7cf8dd",
+                        "tertiary-container": "#4e381c",
+                        "surface-variant": "#e4e2e3",
+                        "on-secondary-fixed": "#00201a",
+                        "error-container": "#ffdad6",
+                        "error": "#ba1a1a",
+                        "on-error-container": "#93000a",
+                        "secondary-fixed-dim": "#5ddbc1",
+                        "tertiary-fixed-dim": "#e3c19b",
+                        "on-tertiary": "#ffffff",
+                        "tertiary": "#362308",
+                        "on-background": "#1b1c1d",
+                        "surface-container": "#efedef",
+                        "on-tertiary-fixed-variant": "#5a4225",
+                        "background": "#fbf9fa",
+                        "surface": "#fbf9fa",
+                        "tertiary-fixed": "#ffddb7",
+                        "on-surface": "#1b1c1d",
+                        "surface-container-low": "#f5f3f4",
+                        "outline": "#74777d",
+                        "on-secondary-fixed-variant": "#005144",
+                        "on-error": "#ffffff",
+                        "on-primary-fixed-variant": "#36485b",
+                        "inverse-on-surface": "#f2f0f2",
+                        "on-primary-fixed": "#091d2e",
+                        "on-secondary": "#ffffff",
+                        "surface-dim": "#dbd9db",
+                        "surface-container-lowest": "#ffffff",
+                        "primary-fixed-dim": "#b5c8df",
+                        "surface-bright": "#fbf9fa"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "unit": "8px",
+                        "stack-gap-md": "16px",
+                        "stack-gap-lg": "24px",
+                        "grid-columns": "4",
+                        "stack-gap-sm": "8px",
+                        "grid-gutter": "12px",
+                        "container-padding": "24px"
+                    },
+                    "fontFamily": {
+                        "label-sm": ["Inter"],
+                        "headline-md": ["Inter"],
+                        "display-lg": ["Inter"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "label-md": ["Inter"],
+                        "headline-lg": ["Inter"]
+                    },
+                    "fontSize": {
+                        "label-sm": ["11px", { "lineHeight": "14px", "fontWeight": "600" }],
+                        "headline-md": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
+                        "display-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.01em", "fontWeight": "500" }],
+                        "headline-lg": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; }
+        .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+        .glass-panel { background: rgba(255, 255, 255, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: 0px 4px 20px rgba(44, 62, 80, 0.04); }
+    </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+</head>
+<body class="bg-[#F4F7F9] text-on-background min-h-screen pb-24 md:pb-0 font-body-md antialiased">
+<!-- TopAppBar -->
+<header class="w-full top-0 sticky bg-surface/80 dark:bg-surface-dim/80 backdrop-blur-xl border-b border-white/10 shadow-sm z-50">
+<div class="flex justify-between items-center px-container-padding h-16 w-full z-50">
+<div class="flex items-center gap-2">
+<img alt="User Avatar" class="w-8 h-8 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8JYZf42mKR2gKc6Y1G17vwZMq1G56twN6FRLcDQCcg7hYSEnlmHc4R4jT9R9_j1BAU37qAtzd2fGMthhJe065lYG5Dt5hKNbos-Xz6yWK9YMSYmkqzU4iaKlW4grCgOwm9W6icwg61JTzHsp8iZxT8A7-w6YKYcVoeVdflv8LLwLOW15FsnbAZvDOMeJgsnzHOkJ0XO9pM9DXt1byo5_G1flEgHX9YUgzH3EfaT9wnlzLcUgRj3HTl0H3TAjstauvaaJkOde5WCP6"/>
+</div>
+<h1 class="font-headline-lg text-headline-lg text-primary dark:text-primary-fixed tracking-tight">BudgetAI</h1>
+<div class="flex items-center text-primary dark:text-primary-fixed hover:opacity-80 transition-opacity cursor-pointer active:scale-95 duration-200">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</div>
+</div>
+</header>
+<main class="max-w-7xl mx-auto px-container-padding pt-12 pb-12">
+<!-- Total Balance Section -->
+<section class="mb-stack-gap-lg flex flex-col items-center text-center">
+<p class="font-label-md text-label-md text-on-surface-variant mb-unit uppercase tracking-widest">Toplam Bakiye</p>
+<h2 class="font-display-lg text-display-lg text-primary tracking-tight">$4,250.00</h2>
+</section>
+<!-- AI Insight Card -->
+<section class="mb-stack-gap-lg">
+<div class="bg-secondary/10 border border-secondary/20 rounded-[16px] p-stack-gap-md flex items-start gap-stack-gap-sm relative overflow-hidden shadow-[0px_4px_20px_rgba(44,62,80,0.04)]">
+<div class="absolute top-0 right-0 w-32 h-32 bg-secondary opacity-5 blur-2xl rounded-full transform translate-x-1/2 -translate-y-1/2"></div>
+<div class="p-2 bg-secondary/20 rounded-full text-secondary flex-shrink-0">
+<span class="material-symbols-outlined" data-icon="lightbulb" data-weight="fill" style="font-variation-settings: 'FILL' 1;">lightbulb</span>
+</div>
+<div>
+<h3 class="font-headline-md text-headline-md text-primary mb-1">AI Analizi</h3>
+<p class="font-body-md text-body-md text-on-surface-variant leading-relaxed">Bu hafta dışarıda yemek harcamalarınızı başarıyla azalttınız ve <span class="font-bold text-secondary">120 TL tasarruf ettiniz</span>. Aylık hedefinize daha hızlı ulaşmak için disiplinli harcamaya devam edin.</p>
+</div>
+</div>
+</section>
+<!-- Spending Overview Bento Grid -->
+<section class="grid grid-cols-1 md:grid-cols-2 gap-grid-gutter">
+<!-- Donut Chart Card -->
+<div class="glass-panel rounded-[16px] p-stack-gap-md flex flex-col items-center justify-center relative min-h-[300px]">
+<h3 class="font-label-md text-label-md text-on-surface-variant absolute top-4 left-4">Aylık Harcama</h3>
+<!-- Minimalist CSS Donut Chart Representation -->
+<div class="relative w-48 h-48 mt-8">
+<svg class="w-full h-full transform -rotate-90" viewbox="0 0 100 100">
+<circle cx="50" cy="50" fill="transparent" r="40" stroke="#efedef" stroke-width="12"></circle>
+<!-- Market 55% -->
+<circle class="opacity-90" cx="50" cy="50" fill="transparent" r="40" stroke="#162839" stroke-dasharray="251.2" stroke-dashoffset="113.04" stroke-width="12"></circle>
+<!-- Entertainment 25% -->
+<circle class="opacity-80 origin-center transform rotate-[198deg]" cx="50" cy="50" fill="transparent" r="40" stroke="#006b5b" stroke-dasharray="251.2" stroke-dashoffset="188.4" stroke-dashoffset-start="138.16" stroke-width="12"></circle>
+<!-- Logistics 20% -->
+<circle class="opacity-70 origin-center transform rotate-[288deg]" cx="50" cy="50" fill="transparent" r="40" stroke="#96a9be" stroke-dasharray="251.2" stroke-dashoffset="200.96" stroke-dashoffset-start="62.8" stroke-width="12"></circle>
+</svg>
+<div class="absolute inset-0 flex flex-col items-center justify-center">
+<span class="font-label-sm text-label-sm text-on-surface-variant">Harcanan</span>
+<span class="font-headline-md text-headline-md text-primary">$2,100</span>
+</div>
+</div>
+</div>
+<!-- Categories Card -->
+<div class="glass-panel rounded-[16px] p-stack-gap-md flex flex-col justify-between">
+<h3 class="font-label-md text-label-md text-on-surface-variant mb-stack-gap-sm">Kategoriler</h3>
+<ul class="flex flex-col gap-unit">
+<!-- Market -->
+<li class="flex items-center justify-between h-[64px] border-b border-surface-container-high last:border-0">
+<div class="flex items-center gap-stack-gap-sm">
+<div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+<span class="material-symbols-outlined" data-icon="shopping_cart">shopping_cart</span>
+</div>
+<span class="font-body-md text-body-md text-primary">Market</span>
+</div>
+<span class="font-headline-md text-headline-md text-primary">$1,155.00</span>
+</li>
+<!-- Entertainment -->
+<li class="flex items-center justify-between h-[64px] border-b border-surface-container-high last:border-0">
+<div class="flex items-center gap-stack-gap-sm">
+<div class="w-10 h-10 rounded-full bg-secondary/10 flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined" data-icon="movie">movie</span>
+</div>
+<span class="font-body-md text-body-md text-primary">Eğlence</span>
+</div>
+<span class="font-headline-md text-headline-md text-primary">$525.00</span>
+</li>
+<!-- Logistics -->
+<li class="flex items-center justify-between h-[64px] border-b border-surface-container-high last:border-0">
+<div class="flex items-center gap-stack-gap-sm">
+<div class="w-10 h-10 rounded-full bg-primary-container/10 flex items-center justify-center text-primary-container">
+<span class="material-symbols-outlined" data-icon="local_shipping">local_shipping</span>
+</div>
+<span class="font-body-md text-body-md text-primary">Lojistik</span>
+</div>
+<span class="font-headline-md text-headline-md text-primary">$420.00</span>
+</li>
+</ul>
+</div>
+</section>
+</main>
+<!-- BottomNavBar -->
+<nav class="md:hidden fixed bottom-0 w-full z-50 bg-surface/80 dark:bg-surface-dim/80 backdrop-blur-xl border-t border-white/10 shadow-[0px_-4px_20px_rgba(44,62,80,0.04)]">
+<div class="flex justify-around items-center h-20 w-full pb-safe px-4 font-label-sm text-label-sm">
+<a class="flex flex-col items-center justify-center text-secondary dark:text-secondary-fixed-dim font-bold active:scale-90 duration-200 hover:bg-surface-container-low dark:hover:bg-surface-container-high transition-colors p-2 rounded-lg" href="#"><span class="material-symbols-outlined mb-1" data-icon="dashboard" data-weight="fill" style="font-variation-settings: 'FILL' 1;">dashboard</span>Panel</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-outline-variant active:scale-90 duration-200 hover:bg-surface-container-low dark:hover:bg-surface-container-high transition-colors p-2 rounded-lg" href="#"><span class="material-symbols-outlined mb-1" data-icon="analytics">analytics</span>Analizler</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-outline-variant active:scale-90 duration-200 hover:bg-surface-container-low dark:hover:bg-surface-container-high transition-colors p-2 rounded-lg" href="#"><span class="material-symbols-outlined mb-1" data-icon="receipt_long">receipt_long</span>Tara</a>
+<a class="flex flex-col items-center justify-center text-on-surface-variant dark:text-outline-variant active:scale-90 duration-200 hover:bg-surface-container-low dark:hover:bg-surface-container-high transition-colors p-2 rounded-lg" href="#"><span class="material-symbols-outlined mb-1" data-icon="person">person</span>Profil</a>
+</div>
+</nav>
+</body></html>
