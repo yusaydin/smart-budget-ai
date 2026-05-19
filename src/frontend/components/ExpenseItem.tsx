@@ -1,10 +1,42 @@
-import { useState } from "react";
-import { getCorporateAdvice } from "../../ai/gemini";
+import { useState, useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+  writeBatch
+} from "firebase/firestore";
+import {
+  auth,
+  db,
+  handleFirestoreError,
+  OperationType,
+  logout,
+  signInWithGoogle
+} from "../lib/firebase";
+import {
+  extractExpenseFromEmail,
+  extractExpenseFromImage,
+  getCorporateAdvice
+} from "../../ai/gemini";
+import { fetchRecentReceiptEmails } from "../../backend/gmail";
 import { format } from "date-fns";
 import { tr } from "date-fns/locale";
-import { Sparkles } from "lucide-react";
-import { formatCurrency } from "../lib/utils";
-import { Expense } from "../types";
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
+import { Pie } from "react-chartjs-2";
+import { Sparkles, Mail, Lock, Receipt } from "lucide-react";
+import { convertCurrency, formatCurrency } from "../lib/utils";
+import { Expense, UserProfile } from "../types";
+import { DEFAULT_CATEGORIES, COMMON_CURRENCIES } from "../constants";
 
 
 export function ExpenseItem({ expense, detail = false }: { expense: Expense, detail?: boolean }) {
@@ -25,33 +57,33 @@ export function ExpenseItem({ expense, detail = false }: { expense: Expense, det
   };
 
   return (
-    <div className="flex items-center justify-between p-4 border-b border-surface-variant hover:bg-surface-bright transition-colors cursor-pointer group last:border-0 relative">
-      <div className="flex items-center gap-4">
-        <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-lg group-hover:scale-105 transition-transform ${expense.isCorporate ? 'bg-tertiary-fixed text-on-tertiary-fixed' : 'bg-primary-fixed text-on-primary-fixed'}`}>
+    <div className="flex items-center justify-between py-3 px-2 border-b border-surface-variant hover:bg-surface-bright transition-colors cursor-pointer group last:border-0 relative">
+      <div className="flex items-center gap-3">
+        <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-sm group-hover:scale-105 transition-transform shrink-0 ${expense.isCorporate ? 'bg-tertiary-fixed text-on-tertiary-fixed' : 'bg-primary-fixed text-on-primary-fixed'}`}>
            {expense.merchant.substring(0, 2).toUpperCase()}
         </div>
         <div>
-          <h4 className="font-body-md text-on-surface font-medium truncate max-w-[120px] sm:max-w-xs flex items-center gap-1.5">
+          <h4 className="text-sm text-on-surface font-medium truncate max-w-[140px] sm:max-w-xs flex items-center gap-1">
             {expense.merchant}
-            {expense.isRecurring && <span className="material-symbols-outlined text-[14px] text-primary">event_repeat</span>}
+            {expense.isRecurring && <span className="material-symbols-outlined text-[12px] text-primary">event_repeat</span>}
           </h4>
-          <p className="font-body-sm text-outline flex items-center gap-1.5">
+          <p className="text-[11px] text-outline flex items-center gap-1 mt-0.5">
             <span className="whitespace-nowrap">{format(new Date(expense.date), 'MMM d', { locale: tr })}</span>
             <span>•</span>
             <span className="truncate">{expense.category}</span>
           </p>
         </div>
       </div>
-      <div className="text-right flex flex-col items-end gap-1 shrink-0 ml-2">
-        <div className="flex flex-col items-end">
-          <span className="font-numeric-lg text-numeric-lg text-error whitespace-nowrap">-{formatCurrency(expense.amount, expense.currency)}</span>
+      <div className="text-right flex flex-col items-end gap-0.5 shrink-0 ml-2">
+        <div className="flex flex-col items-end leading-tight">
+          <span className="text-base font-semibold text-error whitespace-nowrap">-{formatCurrency(expense.amount, expense.currency)}</span>
           {expense.originalAmount && expense.originalCurrency && expense.originalCurrency !== expense.currency && (
-            <span className="text-label-md text-outline font-medium whitespace-nowrap">({formatCurrency(expense.originalAmount, expense.originalCurrency)})</span>
+            <span className="text-[10px] text-outline font-medium whitespace-nowrap">({formatCurrency(expense.originalAmount, expense.originalCurrency)})</span>
           )}
         </div>
         <div className="flex gap-1 mt-0.5">
-          {expense.isCorporate && <div className="px-2 py-0.5 rounded-full bg-tertiary-container/10 text-[10px] font-bold text-tertiary uppercase">Kurumsal</div>}
-          {expense.isRecurring && <div className="px-2 py-0.5 rounded-full bg-primary-container/10 text-[10px] font-bold text-primary uppercase">{expense.recurrenceInterval === 'yearly' ? 'Yıl' : expense.recurrenceInterval === 'weekly' ? 'Hafta' : 'Ay'}</div>}
+          {expense.isCorporate && <div className="px-1.5 py-px rounded bg-tertiary-container/10 text-[9px] font-bold text-tertiary uppercase">Kurumsal</div>}
+          {expense.isRecurring && <div className="px-1.5 py-px rounded bg-primary-container/10 text-[9px] font-bold text-primary uppercase">{expense.recurrenceInterval === 'yearly' ? 'Yıl' : expense.recurrenceInterval === 'weekly' ? 'Hafta' : 'Ay'}</div>}
         </div>
       </div>
       

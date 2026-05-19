@@ -12,7 +12,7 @@ export interface ExtractedExpense {
   isCorporatePotential: boolean;
 }
 
-export async function extractExpenseFromImage(base64Image: string): Promise<ExtractedExpense> {
+export async function extractExpenseFromImage(base64Image: string, mimeType: string = "image/jpeg"): Promise<ExtractedExpense> {
   const model = "gemini-2.5-flash";
   
   const prompt = `Analyze this receipt or invoice. Extract the total amount, currency, category, merchant name, date, and a brief description of items. 
@@ -25,7 +25,7 @@ export async function extractExpenseFromImage(base64Image: string): Promise<Extr
       {
         parts: [
           { text: prompt },
-          { inlineData: { mimeType: "image/jpeg", data: base64Image } }
+          { inlineData: { mimeType, data: base64Image } }
         ]
       }
     ],

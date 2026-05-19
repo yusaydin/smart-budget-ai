@@ -1,21 +1,45 @@
-import { useState, useEffect } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
 import {
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  addDoc,
   doc,
+  getDoc,
+  setDoc,
   updateDoc,
+  serverTimestamp,
+  writeBatch
 } from "firebase/firestore";
 import {
   auth,
   db,
+  handleFirestoreError,
+  OperationType,
   logout,
+  signInWithGoogle
 } from "../lib/firebase";
-import { UserProfile } from "../types";
-import { COMMON_CURRENCIES } from "../constants";
-
+import {
+  extractExpenseFromEmail,
+  extractExpenseFromImage,
+  getCorporateAdvice
+} from "../../ai/gemini";
+import { fetchRecentReceiptEmails } from "../../backend/gmail";
+import { format } from "date-fns";
+import { tr } from "date-fns/locale";
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
+import { Pie } from "react-chartjs-2";
+import { Sparkles, Mail, Lock, Receipt } from "lucide-react";
+import { convertCurrency, formatCurrency } from "../lib/utils";
+import { Expense, UserProfile } from "../types";
+import { DEFAULT_CATEGORIES, COMMON_CURRENCIES } from "../constants";
 
 
 export function SettingsView({ profile }: { profile: UserProfile | null }) {
-  const [darkMode, setDarkMode] = useState(false);
   const [pushNotifs, setPushNotifs] = useState(true);
   const [biometric, setBiometric] = useState(true);
 
@@ -28,6 +52,14 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
 
   const [isEditingCurrency, setIsEditingCurrency] = useState(false);
   const [editCurrencyValue, setEditCurrencyValue] = useState("");
+
+  const handleThemeChange = async (theme: 'light' | 'dark' | 'system') => {
+    if (auth.currentUser && theme !== profile?.theme) {
+      await updateDoc(doc(db, "users", auth.currentUser.uid), {
+        theme
+      });
+    }
+  };
 
   const startEditCurrency = () => {
     setEditCurrencyValue(profile?.currency || "TRY");
@@ -56,22 +88,6 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
             : !profile.autoConvertCurrency,
       });
     }
-  };
-
-  useEffect(() => {
-    setDarkMode(document.documentElement.classList.contains("dark"));
-  }, []);
-
-  const toggleDarkMode = () => {
-    setDarkMode((prev) => {
-      const next = !prev;
-      if (next) {
-        document.documentElement.classList.add("dark");
-      } else {
-        document.documentElement.classList.remove("dark");
-      }
-      return next;
-    });
   };
 
   const startEditName = () => {
@@ -141,17 +157,17 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
       </div>
 
       <div className="space-y-[18px]">
-        {/* PERSONAL INFORMATION */}
+        {/* PROFILE/PERSONAL INFO */}
         <section className="bg-white dark:bg-surface-container rounded-[12px] p-5 shadow-[0px_2px_8px_rgba(0,0,0,0.04)] border border-slate-100/80 dark:border-surface-variant">
           <h3 className="text-[11px] font-bold text-[#0D47A1] dark:text-primary uppercase tracking-[0.08em] mb-[18px]">
-            Personal Information
+            Kişisel Bilgiler
           </h3>
           <div className="space-y-0">
             <div className="pb-[14px] mb-[14px] border-b border-slate-100/80 dark:border-surface-variant">
               {isEditingName ? (
                 <div className="flex flex-col gap-2">
                   <p className="text-[12px] text-slate-800 dark:text-on-surface font-normal">
-                    Full Name
+                    Ad Soyad
                   </p>
                   <div className="flex items-center gap-2">
                     <input
@@ -178,7 +194,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                 >
                   <div>
                     <p className="text-[12px] text-slate-800 dark:text-on-surface mb-[2px] font-normal">
-                      Full Name
+                      Ad Soyad
                     </p>
                     <p className="text-[14px] font-normal text-slate-600 dark:text-on-surface-variant">
                       {profile?.displayName || "Ahmet Yılmaz"}
@@ -194,7 +210,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
             <div className="flex justify-between items-center pb-[14px] mb-[14px] border-b border-slate-100/80 dark:border-surface-variant">
               <div>
                 <p className="text-[12px] text-slate-800 dark:text-on-surface mb-[2px] font-normal">
-                  Email
+                  E-posta
                 </p>
                 <p className="text-[14px] font-normal text-slate-600 dark:text-on-surface-variant">
                   {profile?.email || "ahmet.yilmaz@example.com"}
@@ -212,7 +228,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
               {isEditingPhone ? (
                 <div className="flex flex-col gap-2">
                   <p className="text-[12px] text-slate-800 dark:text-on-surface font-normal">
-                    Phone
+                    Telefon
                   </p>
                   <div className="flex items-center gap-2">
                     <input
@@ -239,7 +255,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                 >
                   <div className="w-full">
                     <p className="text-[12px] text-slate-800 dark:text-on-surface mb-[2px] font-normal">
-                      Phone
+                      Telefon
                     </p>
                     <p className="text-[14px] font-normal text-slate-600 dark:text-on-surface-variant">
                       {profile?.phone || "+90 555 123 4567"}
@@ -257,7 +273,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
               {isEditingCurrency ? (
                 <div className="flex flex-col gap-2">
                   <p className="text-[12px] text-slate-800 dark:text-on-surface font-normal">
-                    Primary Currency
+                    Para Birimi
                   </p>
                   <div className="flex items-center gap-2">
                     <select
@@ -288,7 +304,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                 >
                   <div className="w-full">
                     <p className="text-[12px] text-slate-800 dark:text-on-surface mb-[2px] font-normal">
-                      Primary Currency
+                      Para Birimi
                     </p>
                     <p className="text-[14px] font-normal text-slate-600 dark:text-on-surface-variant">
                       {profile?.currency || "TRY"}
@@ -309,12 +325,12 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
             <span className="material-symbols-outlined text-[16px] -mt-[1px]">
               flag
             </span>
-            Active Goal
+            Aktif Hedef
           </h3>
           <div className="bg-[#f8fafc] dark:bg-surface-container-high rounded-[8px] p-[14px] border border-slate-200/60 dark:border-surface-variant shadow-[inset_0px_1px_2px_rgba(0,0,0,0.02)]">
             <div className="flex justify-between items-center mb-1">
               <p className="font-[500] text-[15px] text-slate-900 dark:text-on-surface">
-                Emergency Fund
+                Acil Durum Fonu
               </p>
             </div>
             <div className="flex justify-between items-baseline mb-[14px]">
@@ -332,7 +348,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
               ></div>
             </div>
             <p className="text-[12px] text-slate-600 dark:text-on-surface-variant font-normal text-center">
-              On track to complete by Dec 2024
+              Aralık 2024'te tamamlanması hedefleniyor
             </p>
           </div>
         </section>
@@ -340,7 +356,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
         {/* PREFERENCES */}
         <section className="bg-white dark:bg-surface-container rounded-[12px] p-5 shadow-[0px_2px_8px_rgba(0,0,0,0.04)] border border-slate-100/80 dark:border-surface-variant">
           <h3 className="text-[11px] font-bold text-[#0D47A1] dark:text-primary uppercase tracking-[0.08em] mb-[18px]">
-            Preferences
+            Tercihler
           </h3>
           <div className="space-y-[20px]">
             <div
@@ -352,7 +368,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                   currency_exchange
                 </span>
                 <span className="text-[14px] text-slate-800 dark:text-on-surface font-normal">
-                  Auto Currency Conversion
+                  Otomatik Kur Çevirimi
                 </span>
               </div>
               <button
@@ -364,25 +380,30 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
               </button>
             </div>
 
-            <div
-              className="flex justify-between items-center cursor-pointer group"
-              onClick={toggleDarkMode}
-            >
+            <div className="flex flex-col gap-3 py-2 border-b border-slate-100/80 dark:border-surface-variant">
               <div className="flex items-center gap-[14px]">
                 <span className="material-symbols-outlined text-slate-800 dark:text-on-surface text-[20px] font-light">
-                  dark_mode
+                  palette
                 </span>
                 <span className="text-[14px] text-slate-800 dark:text-on-surface font-normal">
-                  Dark Mode
+                  Tema
                 </span>
               </div>
-              <button
-                className={`w-11 h-6 rounded-full relative transition-colors focus:outline-none ${darkMode ? "bg-[#0D47A1] dark:bg-primary" : "bg-[#1e293b] dark:bg-surface-variant"}`}
-              >
-                <div
-                  className={`w-[18px] h-[18px] rounded-full absolute top-0.5 shadow-sm transition-all ${darkMode ? "bg-white right-1" : "bg-[#cbd5e1] dark:bg-outline left-1"}`}
-                ></div>
-              </button>
+              <div className="flex bg-slate-100 dark:bg-surface-container rounded-lg p-1">
+                {(['light', 'dark', 'system'] as const).map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => handleThemeChange(t)}
+                    className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                      (profile?.theme || 'system') === t
+                        ? "bg-white dark:bg-surface-variant text-[#0D47A1] dark:text-primary shadow-sm"
+                        : "text-slate-600 dark:text-on-surface-variant hover:text-slate-900 dark:hover:text-on-surface"
+                    }`}
+                  >
+                    {t === 'light' ? 'Açık' : t === 'dark' ? 'Koyu' : 'Sistem'}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div
@@ -394,7 +415,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                   notifications_active
                 </span>
                 <span className="text-[14px] text-slate-800 dark:text-on-surface font-normal">
-                  Push Notifications
+                  Anlık Bildirimler
                 </span>
               </div>
               <button
@@ -415,7 +436,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                   fingerprint
                 </span>
                 <span className="text-[14px] text-slate-800 dark:text-on-surface font-normal">
-                  Biometric Login
+                  Biyometrik Giriş
                 </span>
               </div>
               <button
@@ -432,7 +453,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
         {/* SECURITY */}
         <section className="bg-white dark:bg-surface-container rounded-[12px] p-5 shadow-[0px_2px_8px_rgba(0,0,0,0.04)] border border-slate-100/80 dark:border-surface-variant">
           <h3 className="text-[11px] font-bold text-[#0D47A1] dark:text-primary uppercase tracking-[0.08em] mb-[16px]">
-            Security
+            Güvenlik
           </h3>
           <div className="space-y-1">
             <button className="w-full flex justify-between items-center py-[10px] hover:opacity-70 active:scale-[0.98] transition-all">
@@ -441,7 +462,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                   lock_outline
                 </span>
                 <span className="text-[14px] text-slate-800 dark:text-on-surface font-normal">
-                  Change Password
+                  Şifre Değiştir
                 </span>
               </div>
               <span className="material-symbols-outlined text-slate-800 dark:text-on-surface text-[20px] font-light">
@@ -456,7 +477,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                   shield
                 </span>
                 <span className="text-[14px] text-slate-800 dark:text-on-surface font-normal">
-                  Data Privacy
+                  Veri Gizliliği
                 </span>
               </div>
               <span className="material-symbols-outlined text-slate-800 dark:text-on-surface text-[20px] font-light">
@@ -471,7 +492,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                   link
                 </span>
                 <span className="text-[14px] text-slate-800 dark:text-on-surface font-normal">
-                  Linked Accounts
+                  Bağlı Hesaplar
                 </span>
               </div>
               <span className="material-symbols-outlined text-slate-800 dark:text-on-surface text-[20px] font-light">
@@ -484,7 +505,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
         {/* SUPPORT */}
         <section className="bg-white dark:bg-surface-container rounded-[12px] p-5 shadow-[0px_2px_8px_rgba(0,0,0,0.04)] border border-slate-100/80 dark:border-surface-variant mb-6">
           <h3 className="text-[11px] font-bold text-[#0D47A1] dark:text-primary uppercase tracking-[0.08em] mb-[16px]">
-            Support
+            Destek
           </h3>
           <div className="space-y-1">
             <button className="w-full flex justify-between items-center py-[10px] hover:opacity-70 active:scale-[0.98] transition-all">
@@ -493,7 +514,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                   help_outline
                 </span>
                 <span className="text-[14px] text-slate-800 dark:text-on-surface font-normal">
-                  Help Center
+                  Yardım Merkezi
                 </span>
               </div>
               <span className="material-symbols-outlined text-slate-800 dark:text-on-surface text-[20px] font-light">
@@ -508,7 +529,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
                   description
                 </span>
                 <span className="text-[14px] text-slate-800 dark:text-on-surface font-normal">
-                  Terms of Service
+                  Kullanım Koşulları
                 </span>
               </div>
               <span className="material-symbols-outlined text-slate-800 dark:text-on-surface text-[20px] font-light">
@@ -523,7 +544,7 @@ export function SettingsView({ profile }: { profile: UserProfile | null }) {
               <span className="material-symbols-outlined font-normal text-[20px]">
                 logout
               </span>
-              Logout
+              Çıkış Yap
             </button>
           </div>
         </section>

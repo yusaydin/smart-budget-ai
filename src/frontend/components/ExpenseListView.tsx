@@ -1,9 +1,43 @@
-import { useState } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+  writeBatch
+} from "firebase/firestore";
+import {
+  auth,
+  db,
+  handleFirestoreError,
+  OperationType,
+  logout,
+  signInWithGoogle
+} from "../lib/firebase";
+import {
+  extractExpenseFromEmail,
+  extractExpenseFromImage,
+  getCorporateAdvice
+} from "../../ai/gemini";
+import { fetchRecentReceiptEmails } from "../../backend/gmail";
+import { format } from "date-fns";
+import { tr } from "date-fns/locale";
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
+import { Pie } from "react-chartjs-2";
+import { Sparkles, Mail, Lock, Receipt } from "lucide-react";
+import { convertCurrency, formatCurrency } from "../lib/utils";
 import { Expense, UserProfile } from "../types";
-import { DEFAULT_CATEGORIES } from "../constants";
-import { ExpenseItem } from './ExpenseItem';
-
+import { DEFAULT_CATEGORIES, COMMON_CURRENCIES } from "../constants";
+import { ExpenseItem } from "./ExpenseItem";
 
 
 export function ExpenseListView({
@@ -62,14 +96,14 @@ export function ExpenseListView({
       exit={{ opacity: 0, x: -20 }}
       className="space-y-6"
     >
-      <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-3">
         {/* Search Bar - Simulated conceptually matching the design */}
         <div className="relative w-full">
-          <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-outline">
+          <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[18px]">
             search
           </span>
           <input
-            className="w-full bg-surface-container-lowest border border-surface-variant rounded-xl py-3 pl-12 pr-4 font-body-md text-on-surface focus:outline-none focus:border-primary shadow-sm transition-all"
+            className="w-full bg-surface-container-lowest border border-surface-variant rounded-lg py-2.5 pl-10 pr-3 text-sm text-on-surface focus:outline-none focus:border-primary shadow-sm transition-all"
             placeholder="Search transactions..."
             type="text"
             // Note: implementing search functionality is a bonus, leaving as placeholder for styling purposes
@@ -77,33 +111,33 @@ export function ExpenseListView({
         </div>
 
         {/* Filters array like the design */}
-        <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+        <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
           <button
             onClick={() => setFilterType("All")}
-            className={`flex items-center gap-2 border border-surface-variant rounded-full px-4 py-2 hover:bg-surface-container-lowest transition-colors whitespace-nowrap shadow-sm active:scale-95 ${filterType === "All" ? "bg-primary-fixed text-on-primary-fixed border-transparent" : "bg-surface-container-lowest text-on-surface"}`}
+            className={`flex items-center gap-1.5 border border-surface-variant rounded-full px-3 py-1.5 hover:bg-surface-container-lowest transition-colors whitespace-nowrap shadow-sm active:scale-95 ${filterType === "All" ? "bg-primary-fixed text-on-primary-fixed border-transparent" : "bg-surface-container-lowest text-on-surface"}`}
           >
-            <span className="material-symbols-outlined text-[18px]">
+            <span className="material-symbols-outlined text-[16px]">
               filter_list
             </span>
-            <span className="font-label-md">Tümü</span>
+            <span className="text-xs font-medium">Tümü</span>
           </button>
           <button
             onClick={() => setFilterType("Personal")}
-            className={`flex items-center gap-2 border border-surface-variant rounded-full px-4 py-2 hover:bg-surface-container-lowest transition-colors whitespace-nowrap shadow-sm active:scale-95 ${filterType === "Personal" ? "bg-primary-fixed text-on-primary-fixed border-transparent" : "bg-surface-container-lowest text-on-surface"}`}
+            className={`flex items-center gap-1.5 border border-surface-variant rounded-full px-3 py-1.5 hover:bg-surface-container-lowest transition-colors whitespace-nowrap shadow-sm active:scale-95 ${filterType === "Personal" ? "bg-primary-fixed text-on-primary-fixed border-transparent" : "bg-surface-container-lowest text-on-surface"}`}
           >
-            <span className="material-symbols-outlined text-[18px]">
+            <span className="material-symbols-outlined text-[16px]">
               person
             </span>
-            <span className="font-label-md">Kişisel</span>
+            <span className="text-xs font-medium">Kişisel</span>
           </button>
           <button
             onClick={() => setFilterType("Corporate")}
-            className={`flex items-center gap-2 border border-surface-variant rounded-full px-4 py-2 hover:bg-surface-container-lowest transition-colors whitespace-nowrap shadow-sm active:scale-95 ${filterType === "Corporate" ? "bg-primary-fixed text-on-primary-fixed border-transparent" : "bg-surface-container-lowest text-on-surface"}`}
+            className={`flex items-center gap-1.5 border border-surface-variant rounded-full px-3 py-1.5 hover:bg-surface-container-lowest transition-colors whitespace-nowrap shadow-sm active:scale-95 ${filterType === "Corporate" ? "bg-primary-fixed text-on-primary-fixed border-transparent" : "bg-surface-container-lowest text-on-surface"}`}
           >
-            <span className="material-symbols-outlined text-[18px]">
+            <span className="material-symbols-outlined text-[16px]">
               business
             </span>
-            <span className="font-label-md">İş</span>
+            <span className="text-xs font-medium">İş</span>
           </button>
 
           <div className="flex items-center justify-center border-l border-surface-variant pl-4 ml-2 gap-2 shrink-0">
@@ -142,7 +176,7 @@ export function ExpenseListView({
             <span className="material-symbols-outlined text-[48px] text-surface-dim mb-4">
               receipt_long
             </span>
-            <p className="font-body-md text-on-surface-variant">
+            <p className="text-sm text-on-surface-variant">
               Filtrelerinizle eşleşen işlem yok.
             </p>
           </div>

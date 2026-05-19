@@ -34,4 +34,5 @@ export interface UserProfile {
   syncFrequency?: 'daily' | 'weekly' | 'monthly' | '3months' | '6months' | 'manual';
   processedEmailIds?: string[];
   budgets?: Record<string, number>;
+  theme?: 'light' | 'dark' | 'system';
 }

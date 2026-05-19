@@ -1,8 +1,42 @@
-import { useState } from "react";
-import { motion } from "framer-motion";
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
-import { auth, signInWithGoogle } from "../lib/firebase";
-import { Sparkles, Mail, Lock } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
+  addDoc,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+  writeBatch
+} from "firebase/firestore";
+import {
+  auth,
+  db,
+  handleFirestoreError,
+  OperationType,
+  logout,
+  signInWithGoogle
+} from "../lib/firebase";
+import {
+  extractExpenseFromEmail,
+  extractExpenseFromImage,
+  getCorporateAdvice
+} from "../../ai/gemini";
+import { fetchRecentReceiptEmails } from "../../backend/gmail";
+import { format } from "date-fns";
+import { tr } from "date-fns/locale";
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
+import { Pie } from "react-chartjs-2";
+import { Sparkles, Mail, Lock, Receipt } from "lucide-react";
+import { convertCurrency, formatCurrency } from "../lib/utils";
+import { Expense, UserProfile } from "../types";
+import { DEFAULT_CATEGORIES, COMMON_CURRENCIES } from "../constants";
 
 
 export const AuthScreen = () => {
@@ -58,7 +92,7 @@ export const AuthScreen = () => {
             transition={{ delay: 0.1 }}
             className="text-4xl font-semibold text-white tracking-tight"
           >
-            Paranıza Hükmedin.
+            BudgetAI
           </motion.h1>
           <motion.p 
             initial={{ y: 20, opacity: 0 }}
@@ -66,7 +100,7 @@ export const AuthScreen = () => {
             transition={{ delay: 0.2 }}
             className="text-gray-400"
           >
-            Kişisel ve kurumsal kullanım için yapay zeka destekli takip, kategorizasyon.
+            Harcamalarınızı yapay zeka ile otomatik takip edin.
           </motion.p>
         </div>
 
@@ -76,6 +110,26 @@ export const AuthScreen = () => {
           transition={{ delay: 0.3 }}
           className="space-y-4"
         >
+          {/* Tabs for Login / Register */}
+          <div className="flex bg-white/5 p-1 rounded-xl">
+            <button
+              onClick={() => setIsLogin(true)}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
+                isLogin ? 'bg-violet-600 text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Giriş Yap
+            </button>
+            <button
+              onClick={() => setIsLogin(false)}
+              className={`flex-1 py-2 text-sm font-medium rounded-lg transition-colors ${
+                !isLogin ? 'bg-violet-600 text-white shadow' : 'text-gray-400 hover:text-white'
+              }`}
+            >
+              Kayıt Ol
+            </button>
+          </div>
+
           <form onSubmit={handleEmailAuth} className="space-y-3">
             {error && (
               <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 text-sm text-center">
@@ -91,15 +145,15 @@ export const AuthScreen = () => {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="E-posta adresi"
+                placeholder="E-posta adresi (Örn: isim@ornek.com)"
                 required
-                className="w-full pl-11 pr-4 py-3.5 bg-white/5 border border-white/10 rounded-2xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                className="w-full pl-11 pr-4 py-3.5 bg-gray-800 border border-gray-600 rounded-2xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
               />
             </div>
 
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                <Lock className="h-5 w-5 text-gray-500" />
+                <Lock className="h-5 w-5 text-gray-400" />
               </div>
               <input
                 type="password"
@@ -108,28 +162,18 @@ export const AuthScreen = () => {
                 placeholder="Şifre"
                 required
                 minLength={6}
-                className="w-full pl-11 pr-4 py-3.5 bg-white/5 border border-white/10 rounded-2xl text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
+                className="w-full pl-11 pr-4 py-3.5 bg-gray-800 border border-gray-600 rounded-2xl text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent transition-all"
               />
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 bg-violet-600 text-white font-semibold rounded-2xl flex items-center justify-center hover:bg-violet-700 transition-colors disabled:opacity-50"
+              className="w-full py-3.5 bg-violet-600 text-white font-semibold rounded-2xl flex items-center justify-center hover:bg-violet-700 transition-colors disabled:opacity-50 mt-2"
             >
               {loading ? "Bekleniyor..." : (isLogin ? "Giriş Yap" : "Kayıt Ol")}
             </button>
           </form>
-
-          <div className="text-center">
-            <button
-              type="button"
-              onClick={() => setIsLogin(!isLogin)}
-              className="text-sm text-gray-400 hover:text-white transition-colors"
-            >
-              {isLogin ? "Hesabınız yok mu? Kayıt Olun" : "Zaten hesabınız var mı? Giriş Yapın"}
-            </button>
-          </div>
 
           <div className="relative py-2">
             <div className="absolute inset-0 flex items-center">
@@ -146,7 +190,7 @@ export const AuthScreen = () => {
             className="w-full py-3.5 bg-white text-slate-900 font-bold rounded-2xl flex items-center justify-center gap-3 hover:bg-slate-200 transition-colors shadow-xl"
           >
             <img src="https://www.google.com/favicon.ico" alt="Google" className="w-5 h-5" />
-            Google ile Devam Et
+            Google ile {isLogin ? 'Giriş Yap' : 'Kayıt Ol'}
           </button>
         </motion.div>
       </div>

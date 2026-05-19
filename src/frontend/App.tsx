@@ -157,6 +157,7 @@ export default function App() {
               categories: DEFAULT_CATEGORIES,
               syncLabels: "",
               syncFrequency: "6months",
+              theme: "system",
             };
             await setDoc(docRef, newProfile);
             setProfile(newProfile);
@@ -453,6 +454,31 @@ export default function App() {
     }
   }, [profile]);
 
+  useEffect(() => {
+    const applyTheme = (theme: 'light' | 'dark' | 'system' | undefined) => {
+      const root = document.documentElement;
+      const isSystemDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      
+      if (theme === 'dark' || (theme === 'system' && isSystemDark)) {
+        root.classList.add('dark');
+      } else {
+        root.classList.remove('dark');
+      }
+    };
+
+    applyTheme(profile?.theme || 'system');
+
+    // Listener for system theme change
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = () => {
+      if (!profile?.theme || profile.theme === 'system') {
+        applyTheme('system');
+      }
+    };
+    mediaQuery.addEventListener('change', handleChange);
+    return () => mediaQuery.removeEventListener('change', handleChange);
+  }, [profile?.theme]);
+
   if (loading) return <LoadingScreen />;
   if (!user) return <AuthScreen />;
 
@@ -460,19 +486,19 @@ export default function App() {
   const pendingExpenses = expenses.filter((e) => e.syncStatus === "pending");
 
   return (
-    <div className="min-h-screen flex flex-col antialiased">
+    <div className="min-h-screen flex flex-col antialiased overflow-x-hidden">
       {/* TopAppBar */}
-      <header className="bg-surface text-primary shadow-sm flex justify-between items-center px-4 sm:px-6 h-16 w-full z-50 sticky top-0 shadow-[0px_4px_12px_rgba(13,71,161,0.05)]">
+      <header className="bg-surface text-primary shadow-sm flex justify-between items-center px-4 sm:px-6 h-14 w-full z-50 sticky top-0 shadow-[0px_4px_12px_rgba(13,71,161,0.05)]">
         <button className="text-primary hover:bg-surface-container-high transition-colors active:scale-95 duration-200 p-2 rounded-full flex items-center justify-center shrink-0">
-          <span className="material-symbols-outlined">
+          <span className="material-symbols-outlined text-[20px]">
             account_balance_wallet
           </span>
         </button>
-        <h1 className="font-headline-lg-mobile text-headline-lg-mobile font-bold tracking-tight text-center">
-          Lira
+        <h1 className="text-lg font-bold tracking-tight text-center">
+          BudgetAI
         </h1>
-        <button className="text-primary hover:bg-surface-container-high transition-colors active:scale-95 duration-200 p-2 rounded-full flex items-center justify-center shrink-0 overflow-hidden">
-          <span className="material-symbols-outlined">notifications_none</span>
+        <button onClick={logout} title="Çıkış Yap" className="text-error hover:bg-error/10 transition-colors active:scale-95 duration-200 p-2 rounded-full flex items-center justify-center shrink-0 overflow-hidden">
+          <span className="material-symbols-outlined text-[20px]">logout</span>
         </button>
       </header>
 

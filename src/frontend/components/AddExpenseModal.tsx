@@ -1,23 +1,42 @@
 import { useState, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
+import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
 import {
   collection,
+  query,
+  where,
+  orderBy,
+  onSnapshot,
   addDoc,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
   serverTimestamp,
+  writeBatch
 } from "firebase/firestore";
 import {
+  auth,
   db,
   handleFirestoreError,
   OperationType,
+  logout,
+  signInWithGoogle
 } from "../lib/firebase";
 import {
+  extractExpenseFromEmail,
   extractExpenseFromImage,
+  getCorporateAdvice
 } from "../../ai/gemini";
+import { fetchRecentReceiptEmails } from "../../backend/gmail";
 import { format } from "date-fns";
-import { convertCurrency } from "../lib/utils";
-import { UserProfile } from "../types";
-import { COMMON_CURRENCIES } from "../constants";
-
+import { tr } from "date-fns/locale";
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
+import { Pie } from "react-chartjs-2";
+import { Sparkles, Mail, Lock, Receipt } from "lucide-react";
+import { convertCurrency, formatCurrency } from "../lib/utils";
+import { Expense, UserProfile } from "../types";
+import { DEFAULT_CATEGORIES, COMMON_CURRENCIES } from "../constants";
 
 
 export function AddExpenseModal({
@@ -49,6 +68,8 @@ export function AddExpenseModal({
     date: format(new Date(), "yyyy-MM-dd"),
     description: "",
   });
+
+  const [extractionError, setExtractionError] = useState<string | null>(null);
 
   const [flashOn, setFlashOn] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -116,15 +137,16 @@ export function AddExpenseModal({
         ctx.drawImage(videoRef.current, 0, 0);
         const base64String = canvas.toDataURL("image/jpeg").split(",")[1];
         stopCamera();
-        processImage(base64String);
+        processImage(base64String, "image/jpeg");
       }
     }
   };
 
-  const processImage = async (base64String: string) => {
+  const processImage = async (base64String: string, mimeType: string = "image/jpeg") => {
     setLoading(true);
+    setExtractionError(null);
     try {
-      const extracted = await extractExpenseFromImage(base64String);
+      const extracted = await extractExpenseFromImage(base64String, mimeType);
 
       setFormData({
         amount: extracted.amount.toString(),
@@ -143,8 +165,17 @@ export function AddExpenseModal({
       }
       if (extracted.isCorporatePotential) setIsCorporate(true);
       setStep("form");
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      console.error("Extraction error:", err);
+      // Determine if it is a specific size/format error or a general AI error
+      const msg = err?.message || "";
+      if (msg.includes("MIME type")) {
+        setExtractionError("Desteklenmeyen dosya formatı. Lütfen JPEG, PNG, GIF veya WEBP yükleyin.");
+      } else if (msg.includes("Payload Too Large") || msg.includes("body size")) {
+        setExtractionError("Dosya boyutu çok büyük. Lütfen daha küçük bir resim seçin.");
+      } else {
+        setExtractionError("Fiş okunamadı. Veriler anlaşılamadı, lütfen bilgileri manuel olarak giriniz.");
+      }
       setStep("form");
     } finally {
       setLoading(false);
@@ -158,7 +189,7 @@ export function AddExpenseModal({
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64String = (reader.result as string).split(",")[1];
-      processImage(base64String);
+      processImage(base64String, file.type || "image/jpeg");
     };
     reader.readAsDataURL(file);
   };
@@ -308,7 +339,7 @@ export function AddExpenseModal({
         initial={{ y: "100%" }}
         animate={{ y: 0 }}
         exit={{ y: "100%" }}
-        className="bg-surface w-[100vw] sm:w-[512px] shrink-0 rounded-t-[2.5rem] sm:rounded-[2.5rem] p-6 border-t sm:border border-surface-variant shadow-[0px_8px_24px_rgba(49,124,184,0.12)] max-h-[90vh] overflow-y-auto relative"
+        className="bg-surface w-full sm:w-[512px] shrink-0 rounded-t-[2.5rem] sm:rounded-[2.5rem] p-6 border-t sm:border border-surface-variant shadow-[0px_8px_24px_rgba(49,124,184,0.12)] max-h-[90vh] overflow-y-auto relative"
       >
         {loading && (
           <div className="absolute inset-0 bg-surface/80 backdrop-blur-sm z-50 flex flex-col items-center justify-center">
@@ -329,6 +360,13 @@ export function AddExpenseModal({
             </span>
           </button>
         </div>
+
+        {extractionError && (
+          <div className="mb-6 p-4 bg-error-container text-on-error-container rounded-xl flex items-start gap-3 border border-error/20">
+            <span className="material-symbols-outlined shrink-0">error</span>
+            <p className="text-sm font-medium">{extractionError}</p>
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="flex gap-4">
