@@ -1,43 +1,20 @@
-import { useState, useEffect, useRef } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { onAuthStateChanged, User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
+import { useState, useEffect } from "react";
+import { motion } from "framer-motion";
 import {
   collection,
-  query,
-  where,
-  orderBy,
-  onSnapshot,
   addDoc,
   doc,
-  getDoc,
-  setDoc,
   updateDoc,
   serverTimestamp,
-  writeBatch
 } from "firebase/firestore";
-import {
-  auth,
-  db,
-  handleFirestoreError,
-  OperationType,
-  logout,
-  signInWithGoogle
-} from "../lib/firebase";
-import {
-  extractExpenseFromEmail,
-  extractExpenseFromImage,
-  getCorporateAdvice
-} from "../../ai/gemini";
-import { fetchRecentReceiptEmails } from "../../backend/gmail";
+import { db } from "../lib/firebase";
 import { format } from "date-fns";
 import { tr } from "date-fns/locale";
-import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
 import { Pie } from "react-chartjs-2";
-import { Sparkles, Mail, Lock, Receipt } from "lucide-react";
-import { convertCurrency, formatCurrency } from "../lib/utils";
+import { formatCurrency } from "../lib/utils";
 import { Expense, UserProfile } from "../types";
-import { DEFAULT_CATEGORIES, COMMON_CURRENCIES } from "../constants";
 import { ExpenseItem } from './ExpenseItem';
+
 
 
 export function Dashboard({
